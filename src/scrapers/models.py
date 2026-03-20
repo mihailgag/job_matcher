@@ -14,7 +14,10 @@ class RawJobAd:
     source: str
     ad_id: str
     ad_link: str
-    title: Optional[str]
-    company_name: Optional[str]
-    company_info: Optional[str]
+    title: Optional[str] = None
+    company_name: Optional[str] = None
+    company_info: Optional[str] = None
+    location: Optional[str] = None
+    description: Optional[str] = None
+    posted_at: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)

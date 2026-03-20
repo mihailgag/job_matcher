@@ -53,10 +53,13 @@ class LinkedInScraper(BaseScraper):
                 geo_ids=request.locations,
             )
 
+
             direct_links = self._get_direct_links_from_pagination(
                 driver=driver,
                 pagination_urls=pagination_urls,
             )
+
+            direct_links = direct_links[:3]
 
             raw_ads = self._get_raw_job_descriptions(
                 driver=driver,
