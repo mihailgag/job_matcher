@@ -21,9 +21,8 @@ def main():
     jobs = runner.run(
         source="linkedin",
         job_titles=["Data Engineer"],
-        locations=["106693272"],
+        locations=["Germany", "Switzerland"],
         profile_key="2",
-        save=True,
         save_mode="upsert",
     )
 

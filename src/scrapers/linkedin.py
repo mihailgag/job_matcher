@@ -15,6 +15,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 from src.scrapers.base import BaseScraper
 from src.scrapers.models import ScrapeRequest, RawJobAd
+from src.database.db_manager import DBManager
 
 
 LINKEDIN_PROFILES = {
@@ -27,19 +28,20 @@ LINKEDIN_PROFILES = {
         "password": "Cocacola123*",
     },
 }
-MAX_RESULTS_PER_SEARCH = 25
+MAX_RESULTS_PER_SEARCH = 1000
 
 
 class LinkedInScraper(BaseScraper):
     def __init__(
         self,
         profile_key: str = "1",
-        db_manager: Optional[object] = None,
+        db_manager: Optional[DBManager] = None,
         headless: bool = False,
     ) -> None:
         super().__init__(db_manager=db_manager)
         self.profile_key = profile_key
         self.headless = headless
+        self.db_manager = db_manager
 
     def scrape(self, request: "ScrapeRequest") -> list["RawJobAd"]:
         driver = self._start_driver()
@@ -47,19 +49,21 @@ class LinkedInScraper(BaseScraper):
             self._open_homepage(driver)
             self._sign_in(driver)
 
+            resolved_locations = self._resolve_locations(
+                driver=driver,
+                input_locations=request.locations,
+            )
+
             pagination_urls = self._get_total_results_and_generate_pagination_links(
                 driver=driver,
                 job_titles=request.job_titles,
-                geo_ids=request.locations,
+                resolved_locations=resolved_locations,
             )
-
 
             direct_links = self._get_direct_links_from_pagination(
                 driver=driver,
                 pagination_urls=pagination_urls,
             )
-
-            direct_links = direct_links[:3]
 
             raw_ads = self._get_raw_job_descriptions(
                 driver=driver,
@@ -108,18 +112,73 @@ class LinkedInScraper(BaseScraper):
         )
         sign_in.click()
 
+    def _resolve_locations(
+        self,
+        driver: webdriver.Chrome,
+        input_locations: list[str],
+    ) -> list[dict]:
+        resolved_locations: list[dict] = []
+
+        for input_location in input_locations:
+            cached_mappings: list[dict] = []
+
+            if self.db_manager is not None:
+                cached_mappings = self.db_manager.get_location_mappings(
+                    source="linkedin",
+                    input_location=input_location,
+                )
+
+            if cached_mappings:
+                print(
+                    f"Using {len(cached_mappings)} cached LinkedIn mappings for '{input_location}'"
+                )
+                resolved_locations.extend(cached_mappings)
+                continue
+
+            print(f"No cached mappings for '{input_location}', resolving from LinkedIn...")
+
+            fresh_mappings = self.get_linkedin_location_geoids(
+                driver=driver,
+                location=input_location,
+            )
+
+            if self.db_manager is not None and fresh_mappings:
+                self.db_manager.save_location_mappings(
+                    source="linkedin",
+                    input_location=input_location,
+                    mappings=fresh_mappings,
+                )
+
+            resolved_locations.extend(
+                [
+                    {
+                        "source": "linkedin",
+                        "input_location": input_location,
+                        "resolved_location": item["resolved_location"],
+                        "geo_id": item["geo_id"],
+                        "country": item.get("country"),
+                        "region": item.get("region"),
+                    }
+                    for item in fresh_mappings
+                ]
+            )
+
+        return resolved_locations
+
     def _get_total_results_and_generate_pagination_links(
         self,
         driver: webdriver.Chrome,
         job_titles: list[str],
-        geo_ids: list[str],
+        resolved_locations: list[dict],
     ) -> list[dict]:
         pagination_links: list[dict] = []
 
         for title in job_titles:
             encoded_title = quote(title)
 
-            for geo_id in geo_ids:
+            for location_data in resolved_locations:
+                geo_id = location_data["geo_id"]
+
                 try:
                     base_url = (
                         "https://www.linkedin.com/jobs/search/"
@@ -128,9 +187,9 @@ class LinkedInScraper(BaseScraper):
                         f"&keywords={encoded_title}"
                         "&origin=JOB_SEARCH_PAGE_LOCATION_AUTOCOMPLETE"
                     )
-
-                    driver.get(base_url)
                     time.sleep(1)
+                    driver.get(base_url)
+                    time.sleep(2)
 
                     wait = WebDriverWait(driver, 10)
                     element = wait.until(
@@ -155,13 +214,22 @@ class LinkedInScraper(BaseScraper):
                         total_results=total_results,
                         base_url=base_url,
                     )
+
+                    for page in paginations:
+                        page["input_location"] = location_data["input_location"]
+                        page["resolved_location"] = location_data["resolved_location"]
+                        page["geo_id"] = location_data["geo_id"]
+                        page["job_title"] = title
+
                     pagination_links.extend(paginations)
 
                 except Exception as exc:
-                    print(f"Error while getting total results for {geo_id}/{title}: {exc}")
+                    print(
+                        f"Error while getting total results for "
+                        f"{location_data['input_location']} / {geo_id} / {title}: {exc}"
+                    )
 
         return pagination_links
-
     def _get_all_paginations(
         self,
         total_results: int,
@@ -205,6 +273,7 @@ class LinkedInScraper(BaseScraper):
                 ads_per_page = self._extract_ad_links_from_page(
                     driver=driver,
                     original_url=page_data["pagination_url"],
+                    page_data=page_data,
                 )
 
                 if ads_per_page:
@@ -219,6 +288,7 @@ class LinkedInScraper(BaseScraper):
         self,
         driver: webdriver.Chrome,
         original_url: str,
+        page_data: dict,
     ) -> list[dict]:
         visible_ads = driver.find_elements(By.CLASS_NAME, "job-card-list__title--link")
         total_visible_ads = len(visible_ads)
@@ -235,15 +305,19 @@ class LinkedInScraper(BaseScraper):
             time.sleep(1)
             visible_ads = driver.find_elements(By.CLASS_NAME, "job-card-list__title--link")
 
-        return [{
-            "origin_url" : original_url,
-            "link" : ad.get_attribute("href"),
-            "title" : ad.find_element(By.TAG_NAME, 'span').text
+        return [
+            {
+                "origin_url": original_url,
+                "link": ad.get_attribute("href"),
+                "title": ad.find_element(By.TAG_NAME, "span").text,
+                "input_location": page_data["input_location"],
+                "resolved_location": page_data["resolved_location"],
+                "geo_id": page_data["geo_id"],
+                "job_title": page_data["job_title"],
             }
             for ad in visible_ads
             if ad.get_attribute("href") is not None
         ]
-
 
     def _get_raw_job_descriptions(
         self,
@@ -289,7 +363,6 @@ class LinkedInScraper(BaseScraper):
                 )
 
                 company_name = parent_div.find_element(By.TAG_NAME, "a").text
-
                 full_ad_description = " ".join([company_infos, about_data])
 
                 job_descriptions.append(
@@ -299,9 +372,14 @@ class LinkedInScraper(BaseScraper):
                         title=title,
                         company_name=company_name,
                         company_info=full_ad_description,
+                        location=link_dict["resolved_location"],
                         ad_link=f"https://www.linkedin.com/jobs/view/{ad_id}/",
                         metadata={
                             "origin_url": link_dict["origin_url"],
+                            "input_location": link_dict["input_location"],
+                            "resolved_location": link_dict["resolved_location"],
+                            "geo_id": link_dict["geo_id"],
+                            "job_title": link_dict["job_title"],
                         },
                     )
                 )
@@ -349,36 +427,59 @@ class LinkedInScraper(BaseScraper):
     def get_linkedin_location_geoids(
         self,
         driver: webdriver.Chrome,
-        locations: list[str],
+        location: list[str],
         wait_seconds: int = 10,
     ) -> dict[str, list[dict]]:
         wait = WebDriverWait(driver, wait_seconds)
-        all_results: dict[str, list[dict]] = {}
 
         driver.get("https://www.linkedin.com/jobs/")
 
-        for location in locations:
-            location_input = wait.until(
-                EC.element_to_be_clickable(
-                    (By.CSS_SELECTOR, 'input[placeholder="City, state, or zip code"]')
-                )
+        location_input = wait.until(
+            EC.element_to_be_clickable(
+                (By.CSS_SELECTOR, 'input[placeholder="City, state, or zip code"]')
+            )
+        )
+
+        location_input.click()
+        location_input.send_keys(Keys.COMMAND, "a")
+        time.sleep(0.2)
+        location_input.send_keys(Keys.BACKSPACE)
+        time.sleep(0.2)
+        location_input.send_keys(location)
+
+        wait.until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, '[data-testid="typeahead-results-container"]')
+            )
+        )
+
+        time.sleep(1)
+        suggestions = self.extract_geo_suggestions_from_html(driver.page_source)
+
+        filtered_suggestions = [
+            item
+            for item in suggestions
+            if location.lower() in item["name"].lower()
+        ]
+
+        suggestions_to_use = filtered_suggestions or suggestions
+
+        results = []
+        for item in suggestions_to_use:
+            resolved_location = item["name"]
+            geo_id = item["geo_id"]
+
+            parts = [p.strip() for p in resolved_location.split(",")]
+            country = parts[-1] if len(parts) >= 2 else None
+            region = parts[0] if parts else None
+
+            results.append(
+                {
+                    "resolved_location": resolved_location,
+                    "geo_id": geo_id,
+                    "country": country,
+                    "region": region,
+                }
             )
 
-            location_input.click()
-            location_input.send_keys(Keys.COMMAND, "a")
-            time.sleep(0.2)
-            location_input.send_keys(Keys.BACKSPACE)
-            time.sleep(0.2)
-            location_input.send_keys(location)
-
-            wait.until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, '[data-testid="typeahead-results-container"]')
-                )
-            )
-
-            time.sleep(1)
-            parsed = self.extract_geo_suggestions_from_html(driver.page_source)
-            all_results[location] = parsed
-
-        return all_results
+        return results

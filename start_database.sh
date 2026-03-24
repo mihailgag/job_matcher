@@ -3,6 +3,7 @@ set -e
 
 IMAGE_NAME="job-matcher-postgres"
 CONTAINER_NAME="job-matcher-db"
+VOLUME_NAME="job-matcher-pgdata"
 
 POSTGRES_USER="postgres"
 POSTGRES_PASSWORD="postgres"
@@ -12,6 +13,9 @@ DOCKERFILE="Dockerfile.db"
 
 echo "Stopping old container if it exists..."
 docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+
+echo "Ensuring Docker volume exists..."
+docker volume create "${VOLUME_NAME}" >/dev/null
 
 echo "Building Docker image..."
 docker build -f "${DOCKERFILE}" -t "${IMAGE_NAME}" .
@@ -23,6 +27,7 @@ docker run -d \
   -e POSTGRES_USER="${POSTGRES_USER}" \
   -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
   -e POSTGRES_DB="${POSTGRES_DB}" \
+  -v "${VOLUME_NAME}:/var/lib/postgresql/data" \
   "${IMAGE_NAME}"
 
 echo "Waiting a few seconds for Postgres to start..."
@@ -31,3 +36,5 @@ sleep 5
 echo "Container started."
 echo "Connection string:"
 echo "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT}/${POSTGRES_DB}"
+echo "Docker volume:"
+echo "${VOLUME_NAME}"

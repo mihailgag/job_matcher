@@ -15,7 +15,6 @@ class ScrapeRunner:
         job_titles: list[str],
         locations: list[str],
         profile_key: str = "1",
-        save: bool = True,
         save_mode: str = "upsert",
     ):
         request = ScrapeRequest(
@@ -40,7 +39,7 @@ class ScrapeRunner:
 
         logging.info("Scraper returned %s jobs.", len(jobs))
 
-        if save and self.db_manager is not None:
+        if self.db_manager is not None:
             if source == "linkedin":
                 self.db_manager.save_raw_job_ads(jobs=jobs, mode=save_mode)
             else:

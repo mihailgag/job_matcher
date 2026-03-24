@@ -14,11 +14,12 @@ WriteMode = Literal["append", "upsert"]
 
 
 class DBManager:
-    def __init__(self, dsn: str, schema_dir: str = "job_matcher/src/database/schemas") -> None:
+    def __init__(self, dsn: str, schema_dir: str = "src/database/schemas") -> None:
         self.dsn = dsn
         self.schema_dir = Path(schema_dir)
         self.create_table_from_sql_file("raw_job_ads.sql")
-
+        self.create_table_from_sql_file("linkedin_location_mappings.sql")
+ 
     @contextmanager
     def get_connection(self):
         with psycopg.connect(self.dsn, row_factory=dict_row) as conn:
@@ -203,3 +204,57 @@ class DBManager:
             )
 
         raise ValueError(f"Unsupported mode: {mode}")
+    
+
+    def get_location_mappings(
+        self,
+        source: str,
+        input_location: str,
+    ) -> list[dict[str, Any]]:
+        sql = """
+            SELECT
+                source,
+                input_location,
+                resolved_location,
+                geo_id,
+                country,
+                region
+            FROM location_mappings
+            WHERE source = %s
+            AND LOWER(input_location) = LOWER(%s) 
+            AND LOWER(resolved_location) = LOWER(%s)
+            ORDER BY resolved_location;
+        """
+        #TODO Remove the resolved_location = %s, once tested with contries only.
+        return self.fetch_all(sql, (source, input_location, input_location))
+    
+    def save_location_mappings(
+        self,
+        source: str,
+        input_location: str,
+        mappings: list[dict[str, Any]],
+    ) -> int:
+        if not mappings:
+            return 0
+
+        rows = []
+        for item in mappings:
+            rows.append(
+                {
+                    "source": source,
+                    "input_location": input_location,
+                    "resolved_location": item["resolved_location"],
+                    "geo_id": item["geo_id"],
+                    "country": item.get("country"),
+                    "region": item.get("region"),
+                }
+            )
+
+        return self.save_rows(
+            table_name="location_mappings",
+            rows=rows,
+            mode="upsert",
+            conflict_columns=["source", "input_location", "geo_id"],
+            update_columns=["resolved_location", "country", "region"],
+        )
+    
