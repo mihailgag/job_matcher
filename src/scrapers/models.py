@@ -10,10 +10,10 @@ class ScrapeRequest:
 
 @dataclass
 class RawJobAd:
-    id: int
-    source: str
-    ad_id: str
-    ad_link: str
+    id: Optional[int] = None
+    source: str = ""
+    ad_id: str= ""
+    ad_link: str= ""
     title: Optional[str] = None
     company_name: Optional[str] = None
     company_info: Optional[str] = None
