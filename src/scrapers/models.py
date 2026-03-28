@@ -1,13 +1,15 @@
 from dataclasses import dataclass, field
 from typing import Optional, Any
+from datetime import datetime
 
 
 @dataclass
 class ScrapeRequest:
     source: str
+    execution_ts: datetime
     job_titles: list[str]
     locations: list[str] = field(default_factory=list)
-
+    
 @dataclass
 class RawJobAd:
     id: Optional[int] = None
@@ -16,10 +18,11 @@ class RawJobAd:
     ad_link: str= ""
     title: Optional[str] = None
     company_name: Optional[str] = None
-    company_info: Optional[str] = None
-    location: Optional[str] = None
+    input_location: Optional[str] = None
+    job_location: Optional[str] = None
+    work_mode: Optional[str] = None
+    posted_date: Optional[int] = None
     description: Optional[str] = None
-    posted_at: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

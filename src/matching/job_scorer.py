@@ -19,7 +19,6 @@ class JobScorer:
             [
                 job.title or "",
                 job.company_name or "",
-                job.company_info or "",
                 job.description or "",
             ]
         ).lower()

@@ -87,7 +87,7 @@ def main():
         print(row["title"])
         print(row["company_name"])
         print(f"Score: {row['score']}")
-        print(f"Location: {row['location']}")
+        print(f"Job Location: {row['job_location']}")
         print(f"Config used: {row['config_json']}")
 
 

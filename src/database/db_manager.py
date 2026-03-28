@@ -133,10 +133,11 @@ class DBManager:
                 "ad_link",
                 "title",
                 "company_name",
-                "company_info",
-                "location",
+                "input_location",
+                "job_location",
+                "posted_date",
+                "work_mode",
                 "description",
-                "posted_at",
                 "metadata",
             ],
         )
@@ -152,10 +153,11 @@ class DBManager:
                 ad_link,
                 title,
                 company_name,
-                company_info,
-                location,
+                input_location,
+                job_location,
+                work_mode,
+                posted_date,
                 description,
-                posted_at,
                 metadata
             FROM raw_job_ads
             ORDER BY id DESC
@@ -184,10 +186,11 @@ class DBManager:
                 r.ad_link,
                 r.title,
                 r.company_name,
-                r.company_info,
-                r.location,
+                r.input_location,
+                r.job_location,
+                r.work_mode,
+                r.posted_date,
                 r.description,
-                r.posted_at,
                 r.metadata
             FROM raw_job_ads r
             WHERE NOT EXISTS (
@@ -306,7 +309,10 @@ class DBManager:
                 s.scored_at,
                 r.title,
                 r.company_name,
-                r.location,
+                r.input_location,
+                r.job_location,
+                r.work_mode,
+                r.posted_date,
                 r.ad_link,
                 c.config_json
             FROM job_scores s

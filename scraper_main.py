@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime, timezone
 
 from src.core.logging_config import setup_logging
 from src.database.db_manager import DBManager
@@ -9,7 +10,7 @@ from src.scrapers.models import LinkedInScraperConfig
 
 def main():
     setup_logging(logging.INFO)
-
+    execution_ts = datetime.now(timezone.utc)
     dsn = os.getenv(
         "JOB_MATCHER_DSN",
         "postgresql://postgres:postgres@localhost:5432/job_matcher",
@@ -33,6 +34,7 @@ def main():
             locations=[location],
             scraper_config=linkedin_config,
             save_mode="upsert",
+            execution_ts=execution_ts
         )
 
     print(f"Scraped {len(jobs)} jobs")

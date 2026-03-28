@@ -3,6 +3,7 @@ import re
 import time
 from typing import Optional
 from urllib.parse import urlparse, parse_qs, quote
+from datetime import datetime, timedelta
 
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -69,7 +70,8 @@ class LinkedInScraper(BaseScraper):
 
             raw_ads = self._get_raw_job_descriptions(
                 driver=driver,
-                direct_links=direct_links,
+                direct_links=direct_links[:2],
+                execution_ts=request.execution_ts
             )
 
             return raw_ads
@@ -89,7 +91,7 @@ class LinkedInScraper(BaseScraper):
 
     def _sign_in(self, driver: webdriver.Chrome) -> None:
         credentials = LINKEDIN_PROFILES[self.profile_key]
-
+        time.sleep(0.5)
         try:
             dismiss_icon = driver.find_element(
                 By.CSS_SELECTOR,
@@ -98,9 +100,11 @@ class LinkedInScraper(BaseScraper):
             dismiss_icon.click()
         except Exception:
             pass
-
+        
         sign_in_link = driver.find_element(By.CLASS_NAME, "nav__button-secondary")
         sign_in_link.click()
+
+        time.sleep(2)
 
         username = driver.find_element(By.ID, "username")
         username.send_keys(credentials["username"])
@@ -335,6 +339,7 @@ class LinkedInScraper(BaseScraper):
         self,
         driver: webdriver.Chrome,
         direct_links: list[dict],
+        execution_ts: datetime,
     ) -> list["RawJobAd"]:
         job_descriptions: list[RawJobAd] = []
 
@@ -370,10 +375,9 @@ class LinkedInScraper(BaseScraper):
                     By.XPATH, './div[1]'
                 ).find_elements(By.TAG_NAME, "span")
 
-                company_infos = " ".join(
-                    [item.text for item in spans if item.text.strip()]
-                )
-
+                company_info_parts = [item.text.strip() for item in spans if item.text.strip()]
+                company_infos = " ".join(company_info_parts)
+                parsed_info = parse_linkedin_company_info(company_info_parts)
                 company_name = parent_div.find_element(By.TAG_NAME, "a").text
                 full_ad_description = " ".join([company_infos, about_data])
 
@@ -383,15 +387,21 @@ class LinkedInScraper(BaseScraper):
                         ad_id=ad_id,
                         title=title,
                         company_name=company_name,
-                        company_info=full_ad_description,
-                        location=link_dict["resolved_location"],
+                        description=full_ad_description,
+                        input_location=link_dict["resolved_location"],
+                        job_location=parsed_info["location"],
+                        posted_date=(execution_ts.date() - timedelta(days=parsed_info["posted_days_ago"])),
+                        work_mode=parsed_info["work_mode"],
                         ad_link=f"https://www.linkedin.com/jobs/view/{ad_id}/",
                         metadata={
                             "origin_url": link_dict["origin_url"],
                             "input_location": link_dict["input_location"],
-                            "resolved_location": link_dict["resolved_location"],
+                            "resolved_location": parsed_info["location"],
+                            "posted_days_ago" :parsed_info["posted_days_ago"], 
                             "geo_id": link_dict["geo_id"],
+                            "work_mode": parsed_info["work_mode"],
                             "job_title": link_dict["job_title"],
+
                         },
                     )
                 )
@@ -495,3 +505,69 @@ class LinkedInScraper(BaseScraper):
             )
 
         return results
+    
+
+import re
+from typing import Any
+
+
+def extract_posted_days_ago(value: str | None) -> int | None:
+    if not value:
+        return None
+
+    text = value.strip().lower()
+
+    if "minute" in text or "hour" in text:
+        return 0
+
+    match = re.search(r"(\d+)", text)
+    if not match:
+        return None
+
+    amount = int(match.group(1))
+
+    if "day" in text:
+        return amount
+    if "week" in text:
+        return amount * 7
+    if "month" in text:
+        return amount * 30
+    if "year" in text:
+        return amount * 365
+
+    return None
+
+
+def extract_work_mode(parts: list[str] | None) -> str | None:
+    if not parts:
+        return None
+
+    normalized = {part.strip().lower() for part in parts if part and part.strip()}
+
+    if "hybrid" in normalized:
+        return "hybrid"
+    if "remote" in normalized:
+        return "remote"
+    if "on-site" in normalized or "onsite" in normalized:
+        return "on_site"
+
+    return None
+
+
+def parse_linkedin_company_info(parts: list[str] | None) -> dict[str, Any]:
+    if not parts:
+        return {
+            "location": None,
+            "posted_days_ago": None,
+            "work_mode": None,
+        }
+
+    cleaned_parts = [part.strip() for part in parts if part and part.strip()]
+
+    return {
+        "location": cleaned_parts[0] if cleaned_parts else None,
+        "posted_days_ago": extract_posted_days_ago(
+            cleaned_parts[1] if len(cleaned_parts) > 1 else None
+        ),
+        "work_mode": extract_work_mode(cleaned_parts),
+    }

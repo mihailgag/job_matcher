@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from src.scrapers.models import ScrapeRequest, BaseScraperConfig
 from src.scrapers.registry import get_scraper_components
 from src.database.db_manager import DBManager
@@ -12,6 +14,7 @@ class ScrapeRunner:
         source: str,
         job_titles: list[str],
         locations: list[str],
+        execution_ts: datetime,
         scraper_config: BaseScraperConfig | None = None,
         save_mode: str = "upsert",
     ):
@@ -19,6 +22,7 @@ class ScrapeRunner:
             source=source,
             job_titles=job_titles,
             locations=locations,
+            execution_ts=execution_ts
         )
 
         scraper_cls, default_config_cls = get_scraper_components(source)
