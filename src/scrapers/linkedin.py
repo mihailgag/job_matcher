@@ -14,7 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 from src.scrapers.base import BaseScraper
-from src.scrapers.models import ScrapeRequest, RawJobAd
+from src.scrapers.models import ScrapeRequest, RawJobAd, LinkedInScraperConfig
 from src.database.db_manager import DBManager
 
 
@@ -34,14 +34,15 @@ MAX_RESULTS_PER_SEARCH = 1000
 class LinkedInScraper(BaseScraper):
     def __init__(
         self,
-        profile_key: str = "1",
+        config: LinkedInScraperConfig,
         db_manager: Optional[DBManager] = None,
-        headless: bool = False,
     ) -> None:
         super().__init__(db_manager=db_manager)
-        self.profile_key = profile_key
-        self.headless = headless
-        self.db_manager = db_manager
+        self.config = config
+        self.seen_direct_links = set()
+        self.profile_key = self.config.profile_key
+        self.headless = self.config.headless
+        self.max_results_per_search = self.config.max_results_per_search
 
     def scrape(self, request: "ScrapeRequest") -> list["RawJobAd"]:
         driver = self._start_driver()
@@ -49,6 +50,7 @@ class LinkedInScraper(BaseScraper):
             self._open_homepage(driver)
             self._sign_in(driver)
 
+            # Check if geoid is presented in db for the given location, otherwise scrape the geoids for the location and relevat locations.
             resolved_locations = self._resolve_locations(
                 driver=driver,
                 input_locations=request.locations,
@@ -174,7 +176,7 @@ class LinkedInScraper(BaseScraper):
         pagination_links: list[dict] = []
 
         for title in job_titles:
-            encoded_title = quote(title)
+            encoded_title = quote(title.lower())
 
             for location_data in resolved_locations:
                 geo_id = location_data["geo_id"]
@@ -185,7 +187,7 @@ class LinkedInScraper(BaseScraper):
                         f"?currentJobId=4101716722"
                         f"&geoId={geo_id}"
                         f"&keywords={encoded_title}"
-                        "&origin=JOB_SEARCH_PAGE_LOCATION_AUTOCOMPLETE"
+                        "&origin=JOB_SEARCH_PAGE_LOCATION_AUTOCOMPLETE&refresh=true"
                     )
                     time.sleep(1)
                     driver.get(base_url)
@@ -236,7 +238,7 @@ class LinkedInScraper(BaseScraper):
         base_url: str,
     ) -> list[dict]:
         total_pages = math.ceil(total_results / 25)
-        max_pages = math.ceil(MAX_RESULTS_PER_SEARCH / 25)
+        max_pages = math.ceil(self.max_results_per_search / 25)
         total_pages = min(total_pages, max_pages, 40)
 
         all_paginations = []
@@ -283,6 +285,12 @@ class LinkedInScraper(BaseScraper):
                 print(f"Failed on pagination page {page_data['pagination_url']}: {exc}")
 
         return all_direct_links
+    
+    def _parse_direct_link(self, raw_link):
+        if "?" in raw_link:
+            link = raw_link.split("?")[0]
+        return link
+
 
     def _extract_ad_links_from_page(
         self,
@@ -290,6 +298,8 @@ class LinkedInScraper(BaseScraper):
         original_url: str,
         page_data: dict,
     ) -> list[dict]:
+        ad_links_list = list()
+
         visible_ads = driver.find_elements(By.CLASS_NAME, "job-card-list__title--link")
         total_visible_ads = len(visible_ads)
 
@@ -305,19 +315,21 @@ class LinkedInScraper(BaseScraper):
             time.sleep(1)
             visible_ads = driver.find_elements(By.CLASS_NAME, "job-card-list__title--link")
 
-        return [
-            {
-                "origin_url": original_url,
-                "link": ad.get_attribute("href"),
-                "title": ad.find_element(By.TAG_NAME, "span").text,
-                "input_location": page_data["input_location"],
-                "resolved_location": page_data["resolved_location"],
-                "geo_id": page_data["geo_id"],
-                "job_title": page_data["job_title"],
-            }
-            for ad in visible_ads
-            if ad.get_attribute("href") is not None
-        ]
+            for ad in visible_ads:
+                link = self._parse_direct_link(ad.get_attribute("href"))
+                if link and link not in self.seen_direct_links:
+                    ad_links_list.append({
+                                            "origin_url": original_url,
+                                            "link": link,
+                                            "title": ad.find_element(By.TAG_NAME, "span").text,
+                                            "input_location": page_data["input_location"],
+                                            "resolved_location": page_data["resolved_location"],
+                                            "geo_id": page_data["geo_id"],
+                                            "job_title": page_data["job_title"],
+                                            })
+                self.seen_direct_links.add(link)
+
+        return ad_links_list
 
     def _get_raw_job_descriptions(
         self,

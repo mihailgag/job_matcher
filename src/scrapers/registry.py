@@ -1,16 +1,23 @@
-import logging
+import logging 
+
 from src.scrapers.linkedin import LinkedInScraper
+from src.scrapers.models import LinkedInScraperConfig, BaseScraperConfig
+from src.scrapers.base import BaseScraper
 
 SCRAPER_REGISTRY = {
-    "linkedin": LinkedInScraper,
+    "linkedin": {
+        "scraper_class": LinkedInScraper,
+        "config_class": LinkedInScraperConfig,
+    },
 }
 
-
-def get_scraper(source: str, **kwargs):
-    scraper_cls = SCRAPER_REGISTRY.get(source.lower())
-    if scraper_cls is None:
+def get_scraper_components(
+    source: str,
+) -> tuple[type[BaseScraper], type[BaseScraperConfig]]:
+    item = SCRAPER_REGISTRY.get(source.lower())
+    if item is None:
         raise ValueError(f"Unsupported source: {source}")
-    
-    logging.info(f"Scraper registry: {scraper_cls.__name__}")
 
-    return scraper_cls(**kwargs)
+    logging.info(f"Scraper registry: {item['scraper_class'].__name__}")
+
+    return item["scraper_class"], item["config_class"]
