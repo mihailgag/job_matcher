@@ -21,16 +21,19 @@ def main():
     linkedin_config = LinkedInScraperConfig(
         profile_key="2",
         headless=False,
-        max_results_per_search=400,
+        max_results_per_search=25,
     )
 
-    jobs = runner.run(
-        source="linkedin",
-        job_titles=["Data Engineer", "Senior Data Engineer", "Data Developer"],
-        locations=["Switzerland"],
-        scraper_config=linkedin_config,
-        save_mode="upsert",
-    )
+    LOCATIONS_TO_SCRAPE = ["Germany"]
+
+    for location in LOCATIONS_TO_SCRAPE:
+        jobs = runner.run(
+            source="linkedin",
+            job_titles=["Data Engineer"],
+            locations=[location],
+            scraper_config=linkedin_config,
+            save_mode="upsert",
+        )
 
     print(f"Scraped {len(jobs)} jobs")
 

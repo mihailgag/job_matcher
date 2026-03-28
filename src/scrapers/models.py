@@ -10,6 +10,7 @@ class ScrapeRequest:
 
 @dataclass
 class RawJobAd:
+    id: int
     source: str
     ad_id: str
     ad_link: str
