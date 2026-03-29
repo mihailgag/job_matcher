@@ -16,7 +16,6 @@ class ScrapeRunner:
         locations: list[str],
         execution_ts: datetime,
         scraper_config: BaseScraperConfig | None = None,
-        save_mode: str = "upsert",
     ):
         request = ScrapeRequest(
             source=source,
@@ -36,8 +35,5 @@ class ScrapeRunner:
         )
 
         jobs = scraper.scrape(request)
-
-        if self.db_manager is not None:
-            self.db_manager.save_raw_job_ads(jobs=jobs, mode=save_mode)
 
         return jobs

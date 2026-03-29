@@ -25,17 +25,13 @@ def main():
         max_results_per_search=25,
     )
 
-    LOCATIONS_TO_SCRAPE = ["Germany"]
-
-    for location in LOCATIONS_TO_SCRAPE:
-        jobs = runner.run(
-            source="linkedin",
-            job_titles=["Data Engineer"],
-            locations=[location],
-            scraper_config=linkedin_config,
-            save_mode="upsert",
-            execution_ts=execution_ts
-        )
+    jobs = runner.run(
+        source="linkedin",
+        job_titles=["Data Engineer", "Senior Data Engineer"],
+        locations=["Germany","Austria"],
+        scraper_config=linkedin_config,
+        execution_ts=execution_ts
+    )
 
     print(f"Scraped {len(jobs)} jobs")
 
