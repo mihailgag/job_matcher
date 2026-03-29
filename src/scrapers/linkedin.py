@@ -1,5 +1,6 @@
 import math
 import re
+import logging
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -50,9 +51,13 @@ class LinkedInScraper(BaseScraper):
         all_ads: list[RawJobAd] = []
 
         try:
+            logging.info("Opening LinkedIn homepage")
             self._open_homepage(driver)
+
+            logging.info("Signing in to LinkedIn with profile_key=%s", self.profile_key)
             self._sign_in(driver)
 
+            logging.info("Resolving input locations: %s", request.locations)
             resolved_locations = self._resolve_locations(
                 driver=driver,
                 input_locations=request.locations,
@@ -65,14 +70,17 @@ class LinkedInScraper(BaseScraper):
             for input_location in request.locations:
                 location_group = grouped_locations.get(input_location, [])
                 if not location_group:
-                    print(f"No resolved LinkedIn locations for input '{input_location}'")
+                    logging.warning(
+                        "No resolved LinkedIn locations for input '%s'",
+                        input_location,
+                    )
                     continue
 
                 for job_title in request.job_titles:
-                    print("=" * 80)
-                    print(
-                        f"Scraping batch for input_location='{input_location}', "
-                        f"job_title='{job_title}'"
+                    logging.info(
+                        "Starting scrape batch for input_location='%s', job_title='%s'",
+                        input_location,
+                        job_title,
                     )
 
                     batch_ads: list[RawJobAd] = []
@@ -91,15 +99,25 @@ class LinkedInScraper(BaseScraper):
                             jobs=batch_ads,
                             mode="upsert",
                         )
-                        print(
-                            f"Saved {saved} ads for "
-                            f"input_location='{input_location}', job_title='{job_title}'"
+                        logging.info(
+                            "Saved %s ads for input_location='%s', job_title='%s'",
+                            saved,
+                            input_location,
+                            job_title,
+                        )
+                    else:
+                        logging.info(
+                            "No ads found for input_location='%s', job_title='%s'",
+                            input_location,
+                            job_title,
                         )
 
                     all_ads.extend(batch_ads)
 
+            logging.info("Finished LinkedIn scraping. Total ads collected: %s", len(all_ads))
             return all_ads
         finally:
+            logging.info("Closing LinkedIn driver")
             driver.quit()
 
     def _scrape_single_search(
@@ -109,6 +127,13 @@ class LinkedInScraper(BaseScraper):
         resolved_location: dict[str, Any],
         job_title: str,
     ) -> list["RawJobAd"]:
+        logging.info(
+            "Building pagination for job_title='%s', resolved_location='%s', geo_id='%s'",
+            job_title,
+            resolved_location["resolved_location"],
+            resolved_location["geo_id"],
+        )
+
         pagination_urls = self._get_pagination_links_for_search(
             driver=driver,
             job_title=job_title,
@@ -116,19 +141,42 @@ class LinkedInScraper(BaseScraper):
         )
 
         if not pagination_urls:
+            logging.info(
+                "No pagination URLs found for job_title='%s', resolved_location='%s'",
+                job_title,
+                resolved_location["resolved_location"],
+            )
             return []
 
+        logging.info(
+            "Collecting direct links from %s pagination pages for job_title='%s', resolved_location='%s'",
+            len(pagination_urls),
+            job_title,
+            resolved_location["resolved_location"],
+        )
         direct_links = self._get_direct_links_from_pagination(
             driver=driver,
             pagination_urls=pagination_urls,
         )
 
+        logging.info(
+            "Parsing %s direct job links for job_title='%s', resolved_location='%s'",
+            len(direct_links),
+            job_title,
+            resolved_location["resolved_location"],
+        )
         raw_ads = self._get_raw_job_descriptions(
             driver=driver,
             direct_links=direct_links,
             execution_ts=request.execution_ts,
         )
 
+        logging.info(
+            "Parsed %s raw ads for job_title='%s', resolved_location='%s'",
+            len(raw_ads),
+            job_title,
+            resolved_location["resolved_location"],
+        )
         return raw_ads
 
     def _group_resolved_locations_by_input_location(
@@ -200,14 +248,18 @@ class LinkedInScraper(BaseScraper):
                 )
 
             if cached_mappings:
-                print(
-                    f"Using {len(cached_mappings)} cached LinkedIn mappings "
-                    f"for '{input_location}'"
+                logging.info(
+                    "Using %s cached LinkedIn mappings for '%s'",
+                    len(cached_mappings),
+                    input_location,
                 )
                 resolved_locations.extend(cached_mappings)
                 continue
 
-            print(f"No cached mappings for '{input_location}', resolving from LinkedIn...")
+            logging.info(
+                "No cached mappings for '%s'. Resolving location from LinkedIn.",
+                input_location,
+            )
 
             fresh_mappings = self.get_linkedin_location_geoids(
                 driver=driver,
@@ -219,6 +271,11 @@ class LinkedInScraper(BaseScraper):
                     source="linkedin",
                     input_location=input_location,
                     mappings=fresh_mappings,
+                )
+                logging.info(
+                    "Saved %s fresh LinkedIn mappings for '%s'",
+                    len(fresh_mappings),
+                    input_location,
                 )
 
             resolved_locations.extend(
@@ -255,6 +312,12 @@ class LinkedInScraper(BaseScraper):
                 "&origin=JOB_SEARCH_PAGE_LOCATION_AUTOCOMPLETE&refresh=true"
             )
 
+            logging.info(
+                "Loading LinkedIn search results for job_title='%s', resolved_location='%s'",
+                job_title,
+                resolved_location["resolved_location"],
+            )
+
             time.sleep(1)
             driver.get(base_url)
             time.sleep(2)
@@ -278,6 +341,13 @@ class LinkedInScraper(BaseScraper):
             )
             total_results = int(re.findall(r"\d+", cleaned_text)[0])
 
+            logging.info(
+                "Found %s total results for job_title='%s', resolved_location='%s'",
+                total_results,
+                job_title,
+                resolved_location["resolved_location"],
+            )
+
             paginations = self._get_all_paginations(
                 total_results=total_results,
                 base_url=base_url,
@@ -292,9 +362,11 @@ class LinkedInScraper(BaseScraper):
             return paginations
 
         except Exception as exc:
-            print(
-                f"Error while getting total results for "
-                f"{resolved_location['input_location']} / {geo_id} / {job_title}: {exc}"
+            logging.exception(
+                "Error while getting pagination links for input_location='%s', geo_id='%s', job_title='%s'",
+                resolved_location["input_location"],
+                geo_id,
+                job_title,
             )
             return []
 
@@ -327,12 +399,28 @@ class LinkedInScraper(BaseScraper):
     ) -> list[dict]:
         all_direct_links: list[dict] = []
 
-        for index, page_data in enumerate(pagination_urls):
+        total_pages = len(pagination_urls)
+        last_reported_pct = -1
+
+        logging.info("Starting pagination traversal for %s pages", total_pages)
+
+        for index, page_data in enumerate(pagination_urls, start=1):
             try:
-                print(f"{index + 1}/{len(pagination_urls)}")
+                if total_pages > 0:
+                    current_pct = int((index / total_pages) * 100)
+                    progress_bucket = (current_pct // 10) * 10
+
+                    if progress_bucket != last_reported_pct and progress_bucket > 0:
+                        logging.info(
+                            "Pagination traversal %s%% finished (%s/%s)",
+                            progress_bucket,
+                            index,
+                            total_pages,
+                        )
+                        last_reported_pct = progress_bucket
 
                 if int(page_data["total_results"]) == 0:
-                    print(f"0 results for {page_data['pagination_url']}")
+                    logging.info("0 results for %s", page_data["pagination_url"])
                     continue
 
                 driver.get(page_data["pagination_url"])
@@ -347,9 +435,16 @@ class LinkedInScraper(BaseScraper):
                 if ads_per_page:
                     all_direct_links.extend(ads_per_page)
 
-            except Exception as exc:
-                print(f"Failed on pagination page {page_data['pagination_url']}: {exc}")
+            except Exception:
+                logging.exception(
+                    "Failed on pagination page %s",
+                    page_data["pagination_url"],
+                )
 
+        logging.info(
+            "Finished pagination traversal. Collected %s direct links",
+            len(all_direct_links),
+        )
         return all_direct_links
 
     def _parse_direct_link(self, raw_link: str | None) -> str | None:
@@ -409,13 +504,20 @@ class LinkedInScraper(BaseScraper):
         total_links = len(direct_links)
         last_reported_pct = -1
 
+        logging.info("Starting parsing of %s direct job links", total_links)
+
         for idx, link_dict in enumerate(direct_links, start=1):
             if total_links > 0:
                 current_pct = int((idx / total_links) * 100)
                 progress_bucket = (current_pct // 10) * 10
 
                 if progress_bucket != last_reported_pct and progress_bucket > 0:
-                    print(f"{progress_bucket}% finished ({idx}/{total_links})")
+                    logging.info(
+                        "Job description parsing %s%% finished (%s/%s)",
+                        progress_bucket,
+                        idx,
+                        total_links,
+                    )
                     last_reported_pct = progress_bucket
 
             direct_url = link_dict["link"]
@@ -457,13 +559,6 @@ class LinkedInScraper(BaseScraper):
                 company_name = parent_div.find_element(By.TAG_NAME, "a").text
                 full_ad_description = " ".join([company_infos, about_data])
 
-                posted_at = None
-                if parsed_info["posted_days_ago"] is not None:
-                    posted_at = (
-                        execution_ts.date()
-                        - timedelta(days=parsed_info["posted_days_ago"])
-                    )
-
                 job_descriptions.append(
                     RawJobAd(
                         source="linkedin",
@@ -473,25 +568,31 @@ class LinkedInScraper(BaseScraper):
                         description=full_ad_description,
                         input_location=link_dict["resolved_location"],
                         job_location=parsed_info["location"],
-                        posted_date=(execution_ts.date() - timedelta(days=parsed_info["posted_days_ago"])),
+                        posted_date=(
+                            execution_ts.date()
+                            - timedelta(days=parsed_info["posted_days_ago"])
+                        ),
                         work_mode=parsed_info["work_mode"],
                         ad_link=f"https://www.linkedin.com/jobs/view/{ad_id}/",
                         metadata={
                             "origin_url": link_dict["origin_url"],
                             "input_location": link_dict["input_location"],
                             "resolved_location": parsed_info["location"],
-                            "posted_days_ago" :parsed_info["posted_days_ago"], 
+                            "posted_days_ago": parsed_info["posted_days_ago"],
                             "geo_id": link_dict["geo_id"],
                             "work_mode": parsed_info["work_mode"],
                             "job_title": link_dict["job_title"],
-
                         },
                     )
                 )
 
-            except Exception as exc:
-                print(f"Failed to parse ad {direct_url}: {exc}")
+            except Exception:
+                logging.exception("Failed to parse ad %s", direct_url)
 
+        logging.info(
+            "Finished parsing direct job links. Parsed %s ads successfully",
+            len(job_descriptions),
+        )
         return job_descriptions
 
     def _get_job_id_from_url(self, url: str) -> int:

@@ -27,8 +27,8 @@ def main():
 
     jobs = runner.run(
         source="linkedin",
-        job_titles=["Data Engineer", "Senior Data Engineer"],
-        locations=["Germany","Austria"],
+        job_titles=["Data Engineer"],
+        locations=["Spain"],
         scraper_config=linkedin_config,
         execution_ts=execution_ts
     )
