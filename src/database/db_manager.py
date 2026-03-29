@@ -3,18 +3,14 @@ import logging
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, Iterable, Literal
-from dataclasses import asdict
+from typing import Any, Iterable
 
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.sql import SQL, Identifier, Placeholder
 
 from src.matching.score_config import JobScoreResult
-from src.scrapers.models import RawJobAd
-
-
-WriteMode = Literal["append", "upsert"]
+from src.scrapers.models import RawJobAd, WriteMode
 
 
 class DBManager:
@@ -25,7 +21,7 @@ class DBManager:
         self.create_table_from_sql_file("linkedin_location_mappings.sql")
         self.create_table_from_sql_file("job_scores.sql")
         self.create_table_from_sql_file("input_scoring_configs.sql")
- 
+
     @contextmanager
     def get_connection(self):
         with psycopg.connect(self.dsn, row_factory=dict_row) as conn:
@@ -67,7 +63,7 @@ class DBManager:
         self,
         table_name: str,
         rows: Iterable[dict[str, Any]],
-        mode: WriteMode = "upsert",
+        mode: WriteMode = WriteMode.UPSERT,
         conflict_columns: list[str] | None = None,
         update_columns: list[str] | None = None,
     ) -> int:
@@ -77,7 +73,6 @@ class DBManager:
             return 0
 
         normalized_rows = [self._normalize_row(row) for row in rows]
-
         columns = list(normalized_rows[0].keys())
 
         for row in normalized_rows:
@@ -114,7 +109,7 @@ class DBManager:
     def save_raw_job_ads(
         self,
         jobs: Iterable[Any],
-        mode: WriteMode = "upsert",
+        mode: WriteMode = WriteMode.UPSERT,
     ) -> int:
         rows = [self._to_dict(job) for job in jobs]
 
@@ -139,15 +134,18 @@ class DBManager:
                 "work_mode",
                 "description",
                 "metadata",
+                "last_scraped_at",
+                "last_seen_at",
             ],
         )
-    
+
     def get_raw_job_ads(
         self,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         sql = """
             SELECT
+                id,
                 source,
                 ad_id,
                 ad_link,
@@ -158,7 +156,10 @@ class DBManager:
                 work_mode,
                 posted_date,
                 description,
-                metadata
+                metadata,
+                first_scraped_at,
+                last_scraped_at,
+                last_seen_at
             FROM raw_job_ads
             ORDER BY id DESC
         """
@@ -170,7 +171,6 @@ class DBManager:
             params = (limit,)
 
         return self.fetch_all(sql, params)
-    
 
     def get_raw_job_ads_for_scoring(
         self,
@@ -191,14 +191,17 @@ class DBManager:
                 r.work_mode,
                 r.posted_date,
                 r.description,
-                r.metadata
+                r.metadata,
+                r.first_scraped_at,
+                r.last_scraped_at,
+                r.last_seen_at
             FROM raw_job_ads r
             WHERE NOT EXISTS (
                 SELECT 1
                 FROM job_scores s
                 WHERE s.raw_job_ad_id = r.id
-                AND s.profile_name = %s
-                AND s.config_hash = %s
+                  AND s.profile_name = %s
+                  AND s.config_hash = %s
             )
             ORDER BY r.id DESC
         """
@@ -210,7 +213,59 @@ class DBManager:
             params.append(limit)
 
         return self.fetch_all(sql, tuple(params))
-    
+
+    def get_known_ads_by_ids(
+        self,
+        source: str,
+        ad_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        if not ad_ids:
+            return {}
+
+        sql = """
+            SELECT
+                id,
+                source,
+                ad_id,
+                ad_link,
+                title,
+                company_name,
+                description,
+                input_location,
+                job_location,
+                posted_date,
+                work_mode,
+                metadata,
+                first_scraped_at,
+                last_scraped_at,
+                last_seen_at
+            FROM raw_job_ads
+            WHERE source = %s
+              AND ad_id = ANY(%s)
+        """
+
+        rows = self.fetch_all(sql, (source, ad_ids))
+        return {row["ad_id"]: row for row in rows}
+
+    def touch_last_seen_at(
+        self,
+        source: str,
+        ad_ids: list[str],
+        seen_at,
+    ) -> None:
+        if not ad_ids:
+            return
+
+        sql = """
+            UPDATE raw_job_ads
+            SET
+                last_seen_at = %s,
+                updated_at = NOW()
+            WHERE source = %s
+              AND ad_id = ANY(%s)
+        """
+        self.execute(sql, (seen_at, source, ad_ids))
+
     def save_job_scores(
         self,
         scored_jobs: Iterable[tuple[RawJobAd, JobScoreResult]],
@@ -239,7 +294,7 @@ class DBManager:
         return self.save_rows(
             table_name="job_scores",
             rows=rows,
-            mode="upsert",
+            mode=WriteMode.UPSERT,
             conflict_columns=["raw_job_ad_id", "profile_name", "config_hash"],
             update_columns=[
                 "score",
@@ -249,7 +304,7 @@ class DBManager:
                 "reasons",
             ],
         )
-    
+
     def save_scoring_config(
         self,
         profile_name: str,
@@ -267,11 +322,11 @@ class DBManager:
         return self.save_rows(
             table_name="scoring_configs",
             rows=rows,
-            mode="upsert",
+            mode=WriteMode.UPSERT,
             conflict_columns=["profile_name", "config_hash"],
             update_columns=["config_json"],
         )
-    
+
     def get_scoring_config(
         self,
         profile_name: str,
@@ -286,10 +341,10 @@ class DBManager:
                 created_at
             FROM scoring_configs
             WHERE profile_name = %s
-            AND config_hash = %s
+              AND config_hash = %s
         """
         return self.fetch_all(sql, (profile_name, config_hash))
-    
+
     def get_selected_job_scores_with_config(
         self,
         profile_name: str,
@@ -320,10 +375,10 @@ class DBManager:
                 ON r.id = s.raw_job_ad_id
             INNER JOIN scoring_configs c
                 ON c.profile_name = s.profile_name
-            AND c.config_hash = s.config_hash
+               AND c.config_hash = s.config_hash
             WHERE s.profile_name = %s
-            AND s.config_hash = %s
-            AND s.selected = TRUE
+              AND s.config_hash = %s
+              AND s.selected = TRUE
             ORDER BY s.score DESC, s.scored_at DESC
         """
 
@@ -334,6 +389,58 @@ class DBManager:
             params.append(limit)
 
         return self.fetch_all(sql, tuple(params))
+
+    def get_location_mappings(
+        self,
+        source: str,
+        input_location: str,
+    ) -> list[dict[str, Any]]:
+        sql = """
+            SELECT
+                source,
+                input_location,
+                resolved_location,
+                geo_id,
+                country,
+                region
+            FROM location_mappings
+            WHERE source = %s
+              AND LOWER(input_location) = LOWER(%s)
+              AND LOWER(resolved_location) = LOWER(%s)
+            ORDER BY resolved_location;
+        """
+        # TODO Remove the resolved_location = %s once tested with countries only.
+        return self.fetch_all(sql, (source, input_location, input_location))
+
+    def save_location_mappings(
+        self,
+        source: str,
+        input_location: str,
+        mappings: list[dict[str, Any]],
+    ) -> int:
+        if not mappings:
+            return 0
+
+        rows = []
+        for item in mappings:
+            rows.append(
+                {
+                    "source": source,
+                    "input_location": input_location,
+                    "resolved_location": item["resolved_location"],
+                    "geo_id": item["geo_id"],
+                    "country": item.get("country"),
+                    "region": item.get("region"),
+                }
+            )
+
+        return self.save_rows(
+            table_name="location_mappings",
+            rows=rows,
+            mode=WriteMode.UPSERT,
+            conflict_columns=["source", "input_location", "geo_id"],
+            update_columns=["resolved_location", "country", "region"],
+        )
 
     @staticmethod
     def _to_dict(item: Any) -> dict[str, Any]:
@@ -367,7 +474,7 @@ class DBManager:
             vals=SQL(", ").join(Placeholder() for _ in columns),
         )
 
-        if mode == "append":
+        if mode == WriteMode.APPEND:
             if conflict_columns:
                 return base_sql + SQL(" ON CONFLICT ({conf_cols}) DO NOTHING").format(
                     conf_cols=SQL(", ").join(
@@ -376,7 +483,7 @@ class DBManager:
                 )
             return base_sql
 
-        if mode == "upsert":
+        if mode == WriteMode.UPSERT:
             if not conflict_columns:
                 raise ValueError("conflict_columns are required for upsert mode")
 
@@ -390,7 +497,7 @@ class DBManager:
                 for col in update_columns
             ]
 
-            if "updated_at" in columns:
+            if "updated_at" in columns and "updated_at" not in update_columns:
                 assignments.append(SQL("updated_at = NOW()"))
 
             return (
@@ -404,57 +511,3 @@ class DBManager:
             )
 
         raise ValueError(f"Unsupported mode: {mode}")
-    
-
-    def get_location_mappings(
-        self,
-        source: str,
-        input_location: str,
-    ) -> list[dict[str, Any]]:
-        sql = """
-            SELECT
-                source,
-                input_location,
-                resolved_location,
-                geo_id,
-                country,
-                region
-            FROM location_mappings
-            WHERE source = %s
-            AND LOWER(input_location) = LOWER(%s) 
-            AND LOWER(resolved_location) = LOWER(%s)
-            ORDER BY resolved_location;
-        """
-        #TODO Remove the resolved_location = %s, once tested with contries only.
-        return self.fetch_all(sql, (source, input_location, input_location))
-    
-    def save_location_mappings(
-        self,
-        source: str,
-        input_location: str,
-        mappings: list[dict[str, Any]],
-    ) -> int:
-        if not mappings:
-            return 0
-
-        rows = []
-        for item in mappings:
-            rows.append(
-                {
-                    "source": source,
-                    "input_location": input_location,
-                    "resolved_location": item["resolved_location"],
-                    "geo_id": item["geo_id"],
-                    "country": item.get("country"),
-                    "region": item.get("region"),
-                }
-            )
-
-        return self.save_rows(
-            table_name="location_mappings",
-            rows=rows,
-            mode="upsert",
-            conflict_columns=["source", "input_location", "geo_id"],
-            update_columns=["resolved_location", "country", "region"],
-        )
-    

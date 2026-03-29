@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS raw_job_ads (
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    first_scraped_at TIMESTAMPTZ,
+    last_scraped_at TIMESTAMPTZ,
+    last_seen_at TIMESTAMPTZ,
     CONSTRAINT uq_raw_job_ads_source_ad_id UNIQUE (source, ad_id)
 );
 

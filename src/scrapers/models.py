@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Optional, Any
 from datetime import datetime
+from enum import StrEnum
 
 
 @dataclass
@@ -24,14 +25,37 @@ class RawJobAd:
     posted_date: Optional[int] = None
     description: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    first_scraped_at: Optional[datetime] = None
+    last_scraped_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
 
 
 @dataclass
 class BaseScraperConfig:
     pass
 
+
+
+class WriteMode(StrEnum):
+    APPEND = "append"
+    UPSERT = "upsert"
+
+
+class ScrapeRefreshMode(StrEnum):
+    NEW_ONLY = "new_only"
+    STALE_OR_NEW = "stale_or_new"
+    ALL = "all"
+
+@dataclass
+class ScrapeRefreshPolicy:
+    mode: ScrapeRefreshMode = ScrapeRefreshMode.STALE_OR_NEW
+    stale_after_days: int = 3
+
 @dataclass
 class LinkedInScraperConfig(BaseScraperConfig):
     profile_key: str = "1"
     headless: bool = False
     max_results_per_search: int = 25
+    refresh_policy: ScrapeRefreshPolicy = field(
+        default_factory=ScrapeRefreshPolicy
+    )

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from src.core.logging_config import setup_logging
 from src.database.db_manager import DBManager
 from src.services.scrape_runner import ScrapeRunner
-from src.scrapers.models import LinkedInScraperConfig
+from src.scrapers.models import LinkedInScraperConfig, ScrapeRefreshPolicy, ScrapeRefreshMode
 
 
 def main():
@@ -23,12 +23,17 @@ def main():
         profile_key="2",
         headless=False,
         max_results_per_search=25,
+        refresh_policy=ScrapeRefreshPolicy(
+        mode=ScrapeRefreshMode.STALE_OR_NEW,
+        stale_after_days=3,
+    ),
     )
 
     jobs = runner.run(
         source="linkedin",
         job_titles=["Data Engineer"],
-        locations=["Spain"],
+        locations=["Germany", "Switzerland"],
+        # locations=["United Kingdom", "Switzerland", "Belgium", "Luxembourg", "Austria", "Spain", "France", "Romania", "Greece", "Bulgaria", "Norway", "Italy"],
         scraper_config=linkedin_config,
         execution_ts=execution_ts
     )

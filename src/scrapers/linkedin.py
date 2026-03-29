@@ -17,7 +17,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 from src.scrapers.base import BaseScraper
-from src.scrapers.models import ScrapeRequest, RawJobAd, LinkedInScraperConfig
+from src.scrapers.models import ScrapeRequest, RawJobAd, LinkedInScraperConfig, ScrapeRefreshMode
 from src.database.db_manager import DBManager
 
 
@@ -159,15 +159,20 @@ class LinkedInScraper(BaseScraper):
             pagination_urls=pagination_urls,
         )
 
+        filtered_direct_links = self._filter_direct_links_for_scraping(
+            direct_links=direct_links,
+            execution_ts=request.execution_ts,
+        )
+
         logging.info(
-            "Parsing %s direct job links for job_title='%s', resolved_location='%s'",
-            len(direct_links),
+            "Parsing %s direct job links after refresh filtering for job_title='%s', resolved_location='%s'",
+            len(filtered_direct_links),
             job_title,
             resolved_location["resolved_location"],
         )
         raw_ads = self._get_raw_job_descriptions(
             driver=driver,
-            direct_links=direct_links,
+            direct_links=filtered_direct_links,
             execution_ts=request.execution_ts,
         )
 
@@ -212,7 +217,7 @@ class LinkedInScraper(BaseScraper):
             )
             dismiss_icon.click()
         except Exception:
-            pass
+            logging.info("No LinkedIn dismiss modal found")
 
         sign_in_link = driver.find_element(By.CLASS_NAME, "nav__button-secondary")
         sign_in_link.click()
@@ -361,7 +366,7 @@ class LinkedInScraper(BaseScraper):
 
             return paginations
 
-        except Exception as exc:
+        except Exception:
             logging.exception(
                 "Error while getting pagination links for input_location='%s', geo_id='%s', job_title='%s'",
                 resolved_location["input_location"],
@@ -454,6 +459,135 @@ class LinkedInScraper(BaseScraper):
             return raw_link.split("?")[0]
         return raw_link
 
+    def _extract_job_id_from_direct_link(self, link: str | None) -> str | None:
+        if not link:
+            return None
+
+        clean_link = self._parse_direct_link(link)
+        if not clean_link:
+            return None
+
+        try:
+            return str(
+                clean_link.replace("https://www.linkedin.com/jobs/view/", "").split("/")[0]
+            )
+        except Exception:
+            return None
+
+    def _should_scrape_ad(
+        self,
+        existing_row: dict[str, Any] | None,
+        execution_ts: datetime,
+    ) -> bool:
+        policy = self.config.refresh_policy
+
+        if policy.mode == ScrapeRefreshMode.ALL:
+            return True
+
+        if existing_row is None:
+            return True
+
+        if policy.mode == ScrapeRefreshMode.NEW_ONLY:
+            return False
+
+        if policy.mode == ScrapeRefreshMode.STALE_OR_NEW:
+            last_scraped_at = existing_row.get("last_scraped_at")
+            if last_scraped_at is None:
+                return True
+
+            age_days = (execution_ts - last_scraped_at).days
+            return age_days >= policy.stale_after_days
+
+        raise ValueError(f"Unsupported refresh policy mode: {policy.mode}")
+
+    def _filter_direct_links_for_scraping(
+        self,
+        direct_links: list[dict[str, Any]],
+        execution_ts: datetime,
+    ) -> list[dict[str, Any]]:
+        if self.db_manager is None:
+            logging.info(
+                "No DB manager available. Skipping refresh filtering and scraping all %s links.",
+                len(direct_links),
+            )
+            return direct_links
+
+        ad_id_to_link: dict[str, dict[str, Any]] = {}
+
+        for link_dict in direct_links:
+            ad_id = self._extract_job_id_from_direct_link(link_dict.get("link"))
+            if not ad_id:
+                continue
+            link_dict["ad_id"] = ad_id
+            ad_id_to_link[ad_id] = link_dict
+
+        total_unique_links = len(ad_id_to_link)
+
+        known_ads = self.db_manager.get_known_ads_by_ids(
+            source="linkedin",
+            ad_ids=list(ad_id_to_link.keys()),
+        )
+
+        links_to_scrape: list[dict[str, Any]] = []
+        skipped_known_ids: list[str] = []
+        new_ids: list[str] = []
+        stale_ids: list[str] = []
+
+        for ad_id, link_dict in ad_id_to_link.items():
+            existing_row = known_ads.get(ad_id)
+
+            if existing_row is None:
+                new_ids.append(ad_id)
+                links_to_scrape.append(link_dict)
+                continue
+
+            if self._should_scrape_ad(existing_row, execution_ts):
+                stale_ids.append(ad_id)
+                links_to_scrape.append(link_dict)
+            else:
+                skipped_known_ids.append(ad_id)
+
+        if skipped_known_ids:
+            self.db_manager.touch_last_seen_at(
+                source="linkedin",
+                ad_ids=skipped_known_ids,
+                seen_at=execution_ts,
+            )
+
+        logging.info(
+            (
+                "Direct link refresh filtering summary: total_input=%s, "
+                "unique_links=%s, known_ads=%s, new_ads=%s, stale_ads=%s, "
+                "skipped_known_ads=%s, continuing_to_scrape=%s, mode=%s"
+            ),
+            len(direct_links),
+            total_unique_links,
+            len(known_ads),
+            len(new_ids),
+            len(stale_ids),
+            len(skipped_known_ids),
+            len(links_to_scrape),
+            self.config.refresh_policy.mode.value,
+        )
+
+        if new_ids:
+            logging.info("New ads to scrape: %s", len(new_ids))
+
+        if stale_ids:
+            logging.info(
+                "Previously known ads selected for refresh: %s",
+                len(stale_ids),
+            )
+
+        if skipped_known_ids:
+            logging.info(
+                "Previously known ads ( %s ) skipped due to refresh policy. The refresh policy set to: %s days",
+                len(skipped_known_ids),
+                self.config.refresh_policy.stale_after_days
+            )
+
+        return links_to_scrape
+
     def _extract_ad_links_from_page(
         self,
         driver: webdriver.Chrome,
@@ -480,15 +614,17 @@ class LinkedInScraper(BaseScraper):
             for ad in visible_ads:
                 link = self._parse_direct_link(ad.get_attribute("href"))
                 if link and link not in self.seen_direct_links:
-                    ad_links_list.append({
-                                            "origin_url": original_url,
-                                            "link": link,
-                                            "title": ad.find_element(By.TAG_NAME, "span").text,
-                                            "input_location": page_data["input_location"],
-                                            "resolved_location": page_data["resolved_location"],
-                                            "geo_id": page_data["geo_id"],
-                                            "job_title": page_data["job_title"],
-                                            })
+                    ad_links_list.append(
+                        {
+                            "origin_url": original_url,
+                            "link": link,
+                            "title": ad.find_element(By.TAG_NAME, "span").text,
+                            "input_location": page_data["input_location"],
+                            "resolved_location": page_data["resolved_location"],
+                            "geo_id": page_data["geo_id"],
+                            "job_title": page_data["job_title"],
+                        }
+                    )
                 self.seen_direct_links.add(link)
 
         return ad_links_list
@@ -557,6 +693,14 @@ class LinkedInScraper(BaseScraper):
                 parsed_info = parse_linkedin_company_info(company_info_parts)
 
                 company_name = parent_div.find_element(By.TAG_NAME, "a").text
+
+                posted_date = None
+                if parsed_info["posted_days_ago"] is not None:
+                    posted_date = (
+                        execution_ts.date()
+                        - timedelta(days=parsed_info["posted_days_ago"])
+                    )
+
                 full_ad_description = " ".join([company_infos, about_data])
 
                 job_descriptions.append(
@@ -566,14 +710,14 @@ class LinkedInScraper(BaseScraper):
                         title=title,
                         company_name=company_name,
                         description=full_ad_description,
-                        input_location=link_dict["resolved_location"],
+                        input_location=link_dict["input_location"],
                         job_location=parsed_info["location"],
-                        posted_date=(
-                            execution_ts.date()
-                            - timedelta(days=parsed_info["posted_days_ago"])
-                        ),
+                        posted_date=posted_date,
                         work_mode=parsed_info["work_mode"],
                         ad_link=f"https://www.linkedin.com/jobs/view/{ad_id}/",
+                        first_scraped_at=execution_ts,
+                        last_scraped_at=execution_ts,
+                        last_seen_at=execution_ts,
                         metadata={
                             "origin_url": link_dict["origin_url"],
                             "input_location": link_dict["input_location"],
@@ -675,6 +819,10 @@ class LinkedInScraper(BaseScraper):
         results: list[dict[str, Any]] = []
         for item in suggestions_to_use:
             resolved_location = item["name"]
+
+            #TODO Temp flag to use only the input location
+            if resolved_location != location:
+                continue
             geo_id = item["geo_id"]
 
             parts = [p.strip() for p in resolved_location.split(",")]
