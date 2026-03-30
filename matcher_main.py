@@ -28,7 +28,7 @@ def main():
                 weight=10,
             ),
             WeightedTerms(
-                terms=["data developer", "data platform engineer", "cloud platform engineer", "devops"],
+                terms=["data developer", "data platform engineer", "cloud platform engineer", "gcp cloud engineer", "gcp data engineer"],
                 weight=6,
             ),
         ],
@@ -38,7 +38,7 @@ def main():
                 weight=4,
             ),
             WeightedTerms(
-                terms=["kafka", "aws", "azure", "github", "gitlab", "ci/cd", "ci-cd", "etl pipeline", "data pipeline", "fast api", "rest api"],
+                terms=["aws", "azure", "github", "gitlab", "ci/cd", "ci-cd", "etl pipeline", "data pipeline", "fast api", "rest api"],
                 weight=2,
             ),
         ],

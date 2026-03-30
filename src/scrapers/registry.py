@@ -1,12 +1,13 @@
 import logging 
 
-from src.scrapers.linkedin import LinkedInScraper
+from src.scrapers.linkedin import LinkedInScraperSelenium
+from src.scrapers.linkedin_playwright import LinkedInScraperPlaywright
 from src.scrapers.models import LinkedInScraperConfig, BaseScraperConfig
 from src.scrapers.base import BaseScraper
 
 SCRAPER_REGISTRY = {
     "linkedin": {
-        "scraper_class": LinkedInScraper,
+        "scraper_class": LinkedInScraperSelenium,
         "config_class": LinkedInScraperConfig,
     },
 }

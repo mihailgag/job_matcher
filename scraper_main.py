@@ -22,18 +22,17 @@ def main():
     linkedin_config = LinkedInScraperConfig(
         profile_key="2",
         headless=False,
-        max_results_per_search=25,
+        max_results_per_search=1000,
         refresh_policy=ScrapeRefreshPolicy(
         mode=ScrapeRefreshMode.STALE_OR_NEW,
-        stale_after_days=3,
+        stale_after_days=10,
     ),
     )
 
     jobs = runner.run(
         source="linkedin",
         job_titles=["Data Engineer"],
-        locations=["Germany", "Switzerland"],
-        # locations=["United Kingdom", "Switzerland", "Belgium", "Luxembourg", "Austria", "Spain", "France", "Romania", "Greece", "Bulgaria", "Norway", "Italy"],
+        locations=["Switzerland"],
         scraper_config=linkedin_config,
         execution_ts=execution_ts
     )

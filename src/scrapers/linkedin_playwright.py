@@ -2,24 +2,21 @@ import math
 import re
 import logging
 import time
-import random
 from collections import defaultdict
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Optional, Any
 from urllib.parse import urlparse, parse_qs, quote
 
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
+from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext, TimeoutError as PlaywrightTimeoutError
 
 from src.scrapers.base import BaseScraper
-from src.scrapers.models import ScrapeRequest, RawJobAd, LinkedInScraperConfig, ScrapeRefreshMode
+from src.scrapers.models import (
+    ScrapeRequest,
+    RawJobAd,
+    LinkedInScraperConfig,
+    ScrapeRefreshMode,
+)
 from src.database.db_manager import DBManager
 
 
@@ -35,7 +32,7 @@ LINKEDIN_PROFILES = {
 }
 
 
-class LinkedInScraperSelenium(BaseScraper):
+class LinkedInScraperPlaywright(BaseScraper):
     def __init__(
         self,
         config: LinkedInScraperConfig,
@@ -48,99 +45,112 @@ class LinkedInScraperSelenium(BaseScraper):
         self.headless = self.config.headless
         self.max_results_per_search = self.config.max_results_per_search
 
-    @contextmanager
-    def _driver_session(self):
-        options = webdriver.ChromeOptions()
-        if self.headless:
-            options.add_argument("--headless=new")
-
-        options.add_argument("--disable-gpu")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-
-        try:
-            yield driver
-        finally:
-            logging.info("Closing driver!")
-            driver.quit()
-
     def scrape(self, request: "ScrapeRequest") -> list["RawJobAd"]:
-        # driver = self._start_driver()
         all_ads: list[RawJobAd] = []
 
-        with self._driver_session() as driver:
-            logging.info("Opening LinkedIn homepage")
-            self._open_homepage(driver)
+        with sync_playwright() as p:
+            browser, context, page = self._start_browser(p)
 
-            logging.info("Signing in to LinkedIn with profile_key=%s", self.profile_key)
-            self._sign_in(driver)
+            try:
+                logging.info("Opening LinkedIn homepage")
+                self._open_homepage(page)
 
-            logging.info("Resolving input locations: %s", request.locations)
-            resolved_locations = self._resolve_locations(
-                driver=driver,
-                input_locations=request.locations,
-            )
+                logging.info(
+                    "Signing in to LinkedIn with profile_key=%s",
+                    self.profile_key,
+                )
+                self._sign_in(page)
 
-            grouped_locations = self._group_resolved_locations_by_input_location(
-                resolved_locations
-            )
+                logging.info("Resolving input locations: %s", request.locations)
+                resolved_locations = self._resolve_locations(
+                    page=page,
+                    input_locations=request.locations,
+                )
 
-            for input_location in request.locations:
-                location_group = grouped_locations.get(input_location, [])
-                if not location_group:
-                    logging.warning(
-                        "No resolved LinkedIn locations for input '%s'",
-                        input_location,
-                    )
-                    continue
+                grouped_locations = self._group_resolved_locations_by_input_location(
+                    resolved_locations
+                )
 
-                for job_title in request.job_titles:
-                    logging.info(
-                        "Starting scrape batch for input_location='%s', job_title='%s'",
-                        input_location,
-                        job_title,
-                    )
-
-                    batch_ads: list[RawJobAd] = []
-
-                    for resolved_location in location_group:
-                        ads = self._scrape_single_search(
-                            driver=driver,
-                            request=request,
-                            resolved_location=resolved_location,
-                            job_title=job_title,
-                        )
-                        batch_ads.extend(ads)
-
-                    if batch_ads and self.db_manager is not None:
-                        saved = self.db_manager.save_raw_job_ads(
-                            jobs=batch_ads,
-                            mode="upsert",
-                        )
-                        logging.info(
-                            "Saved %s ads for input_location='%s', job_title='%s'",
-                            saved,
+                for input_location in request.locations:
+                    location_group = grouped_locations.get(input_location, [])
+                    if not location_group:
+                        logging.warning(
+                            "No resolved LinkedIn locations for input '%s'",
                             input_location,
-                            job_title,
                         )
-                    else:
+                        continue
+
+                    for job_title in request.job_titles:
                         logging.info(
-                            "No ads found for input_location='%s', job_title='%s'",
+                            "Starting scrape batch for input_location='%s', job_title='%s'",
                             input_location,
                             job_title,
                         )
 
-                    all_ads.extend(batch_ads)
+                        batch_ads: list[RawJobAd] = []
 
-            logging.info("Finished LinkedIn scraping. Total ads collected: %s", len(all_ads))
-            return all_ads
+                        for resolved_location in location_group:
+                            ads = self._scrape_single_search(
+                                page=page,
+                                request=request,
+                                resolved_location=resolved_location,
+                                job_title=job_title,
+                            )
+                            batch_ads.extend(ads)
+
+                        if batch_ads and self.db_manager is not None:
+                            saved = self.db_manager.save_raw_job_ads(
+                                jobs=batch_ads,
+                                mode="upsert",
+                            )
+                            logging.info(
+                                "Saved %s ads for input_location='%s', job_title='%s'",
+                                saved,
+                                input_location,
+                                job_title,
+                            )
+                        else:
+                            logging.info(
+                                "No ads found for input_location='%s', job_title='%s'",
+                                input_location,
+                                job_title,
+                            )
+
+                        all_ads.extend(batch_ads)
+
+                logging.info(
+                    "Finished LinkedIn scraping. Total ads collected: %s",
+                    len(all_ads),
+                )
+                return all_ads
+
+            finally:
+                logging.info("Closing Playwright browser")
+                context.close()
+                browser.close()
+
+    def _start_browser(self, playwright) -> tuple[Browser, BrowserContext, Page]:
+        browser = playwright.chromium.launch(
+            headless=self.headless,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-extensions",
+                "--disable-gpu",
+            ],
+        )
+
+        context = browser.new_context(
+            java_script_enabled=True,
+        )
+
+        page = context.new_page()
+        page.set_default_timeout(15000)
+
+        return browser, context, page
 
     def _scrape_single_search(
         self,
-        driver: webdriver.Chrome,
+        page: Page,
         request: "ScrapeRequest",
         resolved_location: dict[str, Any],
         job_title: str,
@@ -153,7 +163,7 @@ class LinkedInScraperSelenium(BaseScraper):
         )
 
         pagination_urls = self._get_pagination_links_for_search(
-            driver=driver,
+            page=page,
             job_title=job_title,
             resolved_location=resolved_location,
         )
@@ -173,7 +183,7 @@ class LinkedInScraperSelenium(BaseScraper):
             resolved_location["resolved_location"],
         )
         direct_links = self._get_direct_links_from_pagination(
-            driver=driver,
+            page=page,
             pagination_urls=pagination_urls,
         )
 
@@ -189,7 +199,7 @@ class LinkedInScraperSelenium(BaseScraper):
             resolved_location["resolved_location"],
         )
         raw_ads = self._get_raw_job_descriptions(
-            driver=driver,
+            page=page,
             direct_links=filtered_direct_links,
             execution_ts=request.execution_ts,
         )
@@ -213,54 +223,40 @@ class LinkedInScraperSelenium(BaseScraper):
 
         return dict(grouped)
 
-    def _start_driver(self) -> webdriver.Chrome:
-        options = webdriver.ChromeOptions()
-        if self.headless:
-            options.add_argument("--headless=new")
-        
-        options.add_argument("--disable-gpu")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--renderer-process-limit=2")
-      
-        service = Service(ChromeDriverManager().install())
-        return webdriver.Chrome(service=service, options=options)
-
-    def _open_homepage(self, driver: webdriver.Chrome) -> None:
-        driver.get("https://www.linkedin.com/?trk=public_profile_nav-header-logo")
-
-    def _sign_in(self, driver: webdriver.Chrome) -> None:
-        credentials = LINKEDIN_PROFILES[self.profile_key]
-        time.sleep(0.5)
-
-        try:
-            dismiss_icon = driver.find_element(
-                By.CSS_SELECTOR,
-                ".contextual-sign-in-modal__modal-dismiss-icon svg",
-            )
-            dismiss_icon.click()
-        except Exception:
-            logging.info("No LinkedIn dismiss modal found")
-
-        sign_in_link = driver.find_element(By.CLASS_NAME, "nav__button-secondary")
-        sign_in_link.click()
-
-        time.sleep(2)
-
-        username = driver.find_element(By.ID, "username")
-        username.send_keys(credentials["username"])
-
-        password_field = driver.find_element(By.ID, "password")
-        password_field.send_keys(credentials["password"])
-
-        sign_in = driver.find_element(
-            By.CSS_SELECTOR,
-            "button.btn__primary--large.from__button--floating",
+    def _open_homepage(self, page: Page) -> None:
+        page.goto(
+            "https://www.linkedin.com/?trk=public_profile_nav-header-logo",
+            wait_until="domcontentloaded",
         )
-        sign_in.click()
+
+    def _sign_in(self, page: Page) -> None:
+        credentials = LINKEDIN_PROFILES[self.profile_key]
+
+        logging.info("Opening LinkedIn login page directly")
+        page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded")
+        time.sleep(2)
+        page.wait_for_load_state("networkidle")
+
+        username = page.locator("#username").first
+        password = page.locator("#password").first
+
+        username.wait_for(timeout=20000)
+        password.wait_for(timeout=20000)
+
+        time.sleep(1)
+        username.fill(credentials["username"])
+        password.fill(credentials["password"])
+
+        logging.info("Submitting LinkedIn credentials")
+        page.locator('button[type="submit"]').first.click()
+        time.sleep(1)
+
+        print("Placeholder for Capctyha to be solved manually")
+
 
     def _resolve_locations(
         self,
-        driver: webdriver.Chrome,
+        page: Page,
         input_locations: list[str],
     ) -> list[dict[str, Any]]:
         resolved_locations: list[dict[str, Any]] = []
@@ -289,7 +285,7 @@ class LinkedInScraperSelenium(BaseScraper):
             )
 
             fresh_mappings = self.get_linkedin_location_geoids(
-                driver=driver,
+                page=page,
                 location=input_location,
             )
 
@@ -323,7 +319,7 @@ class LinkedInScraperSelenium(BaseScraper):
 
     def _get_pagination_links_for_search(
         self,
-        driver: webdriver.Chrome,
+        page: Page,
         job_title: str,
         resolved_location: dict[str, Any],
     ) -> list[dict[str, Any]]:
@@ -336,7 +332,7 @@ class LinkedInScraperSelenium(BaseScraper):
                 f"?currentJobId=4101716722"
                 f"&geoId={geo_id}"
                 f"&keywords={encoded_title}"
-                "&origin=JOB_SEARCH_PAGE_LOCATION_AUTOCOMPLETE&refresh=true&sortBy=DD"
+                "&origin=JOB_SEARCH_PAGE_LOCATION_AUTOCOMPLETE&refresh=true"
             )
 
             logging.info(
@@ -345,21 +341,15 @@ class LinkedInScraperSelenium(BaseScraper):
                 resolved_location["resolved_location"],
             )
 
-            time.sleep(1)
-            driver.get(base_url)
-            time.sleep(2)
+            page.goto(base_url, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
 
-            wait = WebDriverWait(driver, 10)
-            element = wait.until(
-                EC.presence_of_element_located(
-                    (
-                        By.CSS_SELECTOR,
-                        ".jobs-search-results-list__title-heading.truncate.jobs-search-results-list__text",
-                    )
-                )
-            )
+            heading = page.locator(
+                ".jobs-search-results-list__title-heading.truncate.jobs-search-results-list__text"
+            ).first
+            heading.wait_for(timeout=10000)
 
-            text = element.text
+            text = heading.inner_text()
             cleaned_text = (
                 text.split("\n")[1]
                 .replace("results", "")
@@ -380,11 +370,11 @@ class LinkedInScraperSelenium(BaseScraper):
                 base_url=base_url,
             )
 
-            for page in paginations:
-                page["input_location"] = resolved_location["input_location"]
-                page["resolved_location"] = resolved_location["resolved_location"]
-                page["geo_id"] = resolved_location["geo_id"]
-                page["job_title"] = job_title
+            for page_item in paginations:
+                page_item["input_location"] = resolved_location["input_location"]
+                page_item["resolved_location"] = resolved_location["resolved_location"]
+                page_item["geo_id"] = resolved_location["geo_id"]
+                page_item["job_title"] = job_title
 
             return paginations
 
@@ -421,7 +411,7 @@ class LinkedInScraperSelenium(BaseScraper):
 
     def _get_direct_links_from_pagination(
         self,
-        driver: webdriver.Chrome,
+        page: Page,
         pagination_urls: list[dict],
     ) -> list[dict]:
         all_direct_links: list[dict] = []
@@ -450,11 +440,11 @@ class LinkedInScraperSelenium(BaseScraper):
                     logging.info("0 results for %s", page_data["pagination_url"])
                     continue
 
-                driver.get(page_data["pagination_url"])
-                time.sleep(1)
+                page.goto(page_data["pagination_url"], wait_until="domcontentloaded")
+                page.wait_for_timeout(1200)
 
                 ads_per_page = self._extract_ad_links_from_page(
-                    driver=driver,
+                    page=page,
                     original_url=page_data["pagination_url"],
                     page_data=page_data,
                 )
@@ -603,44 +593,51 @@ class LinkedInScraperSelenium(BaseScraper):
 
         if skipped_known_ids:
             logging.info(
-                "Previously known ads ( %s ) skipped due to refresh policy. The refresh policy set to: %s days",
+                "Previously known ads (%s) skipped due to refresh policy. The refresh policy set to: %s days",
                 len(skipped_known_ids),
-                self.config.refresh_policy.stale_after_days
+                self.config.refresh_policy.stale_after_days,
             )
 
         return links_to_scrape
 
     def _extract_ad_links_from_page(
         self,
-        driver: webdriver.Chrome,
+        page: Page,
         original_url: str,
         page_data: dict,
     ) -> list[dict]:
-        ad_links_list = list()
+        ad_links_list = []
 
-        visible_ads = driver.find_elements(By.CLASS_NAME, "job-card-list__title--link")
-        total_visible_ads = len(visible_ads)
+        visible_ads = page.locator(".job-card-list__title--link")
+        total_visible_ads = visible_ads.count()
 
         total_scrolls_required = (
             math.ceil(25 / total_visible_ads) + 1 if total_visible_ads > 0 else 1
         )
 
         for _ in range(total_scrolls_required):
-            if not visible_ads:
+            if total_visible_ads == 0:
                 break
 
-            driver.execute_script("arguments[0].scrollIntoView(true);", visible_ads[-1])
-            time.sleep(1)
-            visible_ads = driver.find_elements(By.CLASS_NAME, "job-card-list__title--link")
+            last_ad = visible_ads.nth(total_visible_ads - 1)
+            last_ad.scroll_into_view_if_needed()
+            page.wait_for_timeout(800)
 
-            for ad in visible_ads:
+            visible_ads = page.locator(".job-card-list__title--link")
+            total_visible_ads = visible_ads.count()
+
+            for i in range(total_visible_ads):
+                ad = visible_ads.nth(i)
                 link = self._parse_direct_link(ad.get_attribute("href"))
                 if link and link not in self.seen_direct_links:
+                    title_span = ad.locator("span").first
+                    title = title_span.inner_text().strip() if title_span.count() > 0 else ""
+
                     ad_links_list.append(
                         {
                             "origin_url": original_url,
                             "link": link,
-                            "title": ad.find_element(By.TAG_NAME, "span").text,
+                            "title": title,
                             "input_location": page_data["input_location"],
                             "resolved_location": page_data["resolved_location"],
                             "geo_id": page_data["geo_id"],
@@ -653,7 +650,7 @@ class LinkedInScraperSelenium(BaseScraper):
 
     def _get_raw_job_descriptions(
         self,
-        driver: webdriver.Chrome,
+        page: Page,
         direct_links: list[dict[str, Any]],
         execution_ts: datetime,
     ) -> list["RawJobAd"]:
@@ -682,40 +679,38 @@ class LinkedInScraperSelenium(BaseScraper):
             title = link_dict["title"]
 
             try:
-                time.sleep(random.randint(1,3))
-                driver.get(direct_url)
-                time.sleep(1)
+                page.goto(direct_url, wait_until="domcontentloaded")
+                page.wait_for_timeout(1000)
 
-                ad_id = str(self._get_job_id_from_url(driver.current_url))
+                ad_id = str(self._get_job_id_from_url(page.url))
 
-                job_description_element = driver.find_element(
-                    By.CSS_SELECTOR,
-                    f'div[componentkey="JobDetails_AboutTheJob_{ad_id}"]',
-                )
+                job_description_element = page.locator(
+                    f'div[componentkey="JobDetails_AboutTheJob_{ad_id}"]'
+                ).first
+                job_description_element.wait_for(timeout=10000)
+                about_data = job_description_element.text_content() or ""
 
-                about_data = job_description_element.get_attribute("textContent")
+                parent_div = page.locator(
+                    'div[data-testid="lazy-column"][data-component-type="LazyColumn"]'
+                ).first
+                parent_div.wait_for(timeout=10000)
 
-                wait = WebDriverWait(driver, 10)
-                parent_div = wait.until(
-                    EC.presence_of_element_located(
-                        (
-                            By.CSS_SELECTOR,
-                            'div[data-testid="lazy-column"][data-component-type="LazyColumn"]',
-                        )
-                    )
-                )
+                spans = parent_div.locator("./div[1] >> span")
+                company_info_parts = []
+                for i in range(spans.count()):
+                    text = (spans.nth(i).text_content() or "").strip()
+                    if text:
+                        company_info_parts.append(text)
 
-                spans = parent_div.find_element(
-                    By.XPATH, "./div[1]"
-                ).find_elements(By.TAG_NAME, "span")
-
-                company_info_parts = [
-                    item.text.strip() for item in spans if item.text.strip()
-                ]
                 company_infos = " ".join(company_info_parts)
                 parsed_info = parse_linkedin_company_info(company_info_parts)
 
-                company_name = parent_div.find_element(By.TAG_NAME, "a").text
+                company_name_locator = parent_div.locator("a").first
+                company_name = (
+                    (company_name_locator.text_content() or "").strip()
+                    if company_name_locator.count() > 0
+                    else None
+                )
 
                 posted_date = None
                 if parsed_info["posted_days_ago"] is not None:
@@ -804,35 +799,28 @@ class LinkedInScraperSelenium(BaseScraper):
 
     def get_linkedin_location_geoids(
         self,
-        driver: webdriver.Chrome,
+        page: Page,
         location: str,
         wait_seconds: int = 10,
     ) -> list[dict[str, Any]]:
-        wait = WebDriverWait(driver, wait_seconds)
+        page.goto("https://www.linkedin.com/jobs/", wait_until="domcontentloaded")
 
-        driver.get("https://www.linkedin.com/jobs/")
-
-        location_input = wait.until(
-            EC.element_to_be_clickable(
-                (By.CSS_SELECTOR, 'input[placeholder="City, state, or zip code"]')
-            )
-        )
+        location_input = page.locator('input[placeholder="City, state, or zip code"]').first
+        location_input.wait_for(timeout=wait_seconds * 1000)
 
         location_input.click()
-        location_input.send_keys(Keys.COMMAND, "a")
-        time.sleep(0.2)
-        location_input.send_keys(Keys.BACKSPACE)
-        time.sleep(0.2)
-        location_input.send_keys(location)
+        location_input.press("Meta+A")
+        page.wait_for_timeout(200)
+        location_input.press("Backspace")
+        page.wait_for_timeout(200)
+        location_input.fill(location)
 
-        wait.until(
-            EC.presence_of_element_located(
-                (By.CSS_SELECTOR, '[data-testid="typeahead-results-container"]')
-            )
+        page.locator('[data-testid="typeahead-results-container"]').first.wait_for(
+            timeout=wait_seconds * 1000
         )
 
-        time.sleep(1)
-        suggestions = self.extract_geo_suggestions_from_html(driver.page_source)
+        page.wait_for_timeout(1000)
+        suggestions = self.extract_geo_suggestions_from_html(page.content())
 
         filtered_suggestions = [
             item for item in suggestions if location.lower() in item["name"].lower()
@@ -846,6 +834,7 @@ class LinkedInScraperSelenium(BaseScraper):
             #TODO Temp flag to use only the input location
             if resolved_location != location:
                 continue
+
             geo_id = item["geo_id"]
 
             parts = [p.strip() for p in resolved_location.split(",")]
