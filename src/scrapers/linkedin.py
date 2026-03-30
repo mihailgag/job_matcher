@@ -195,7 +195,7 @@ class LinkedInScraperSelenium(BaseScraper):
         )
         raw_ads = self._get_raw_job_descriptions(
             driver=driver,
-            direct_links=filtered_direct_links[:2], #TODO Testing, remove this!
+            direct_links=filtered_direct_links, 
             execution_ts=request.execution_ts,
         )
 

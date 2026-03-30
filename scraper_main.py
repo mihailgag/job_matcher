@@ -42,7 +42,7 @@ def main() -> None:
     jobs = scrape_runner.run(
         source="linkedin",
         job_titles=["data engineer"],
-        locations=["Israel"],
+        locations=["Netherlands", "Scotland", "Ukraine", "Israel", "European Union"],
         execution_ts=datetime.now(timezone.utc),
         scraper_config=linkedin_config
     )

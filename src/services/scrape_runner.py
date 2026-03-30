@@ -2,17 +2,14 @@ from datetime import datetime
 
 from src.scrapers.models import ScrapeRequest, BaseScraperConfig
 from src.scrapers.registry import get_scraper_components
-from src.database.repositories.location_mappings_repository import (
-    LocationMappingsRepository,
-)
-from src.database.repositories.raw_job_ads_repository import RawJobAdsRepository
+from src.protocols.repositories import RawJobAdsRepositoryProtocol, LocationMappingsRepositoryProtocol
 
 
 class ScrapeRunner:
     def __init__(
         self,
-        raw_job_ads_repository: RawJobAdsRepository | None = None,
-        location_mappings_repository: LocationMappingsRepository | None = None,
+        raw_job_ads_repository: RawJobAdsRepositoryProtocol | None = None,
+        location_mappings_repository: LocationMappingsRepositoryProtocol | None = None,
     ) -> None:
         self.raw_job_ads_repository = raw_job_ads_repository
         self.location_mappings_repository = location_mappings_repository
