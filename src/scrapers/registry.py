@@ -1,7 +1,6 @@
 import logging 
 
 from src.scrapers.linkedin import LinkedInScraperSelenium
-from src.scrapers.linkedin_playwright import LinkedInScraperPlaywright
 from src.scrapers.models import LinkedInScraperConfig, BaseScraperConfig
 from src.scrapers.base import BaseScraper
 

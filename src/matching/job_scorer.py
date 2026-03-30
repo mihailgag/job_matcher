@@ -1,7 +1,7 @@
 from typing import Any, Iterable
 
 from src.helpers.helpers import detect_language
-from src.matching.score_config import (
+from src.matching.models import (
     JobScoreConfig,
     JobScoreResult,
     WeightedTerms,

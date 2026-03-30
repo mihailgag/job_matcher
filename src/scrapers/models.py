@@ -34,8 +34,6 @@ class RawJobAd:
 class BaseScraperConfig:
     pass
 
-
-
 class WriteMode(StrEnum):
     APPEND = "append"
     UPSERT = "upsert"
@@ -45,6 +43,13 @@ class ScrapeRefreshMode(StrEnum):
     NEW_ONLY = "new_only"
     STALE_OR_NEW = "stale_or_new"
     ALL = "all"
+
+
+class WorkMode(StrEnum):
+    REMOTE = "remote"
+    HYBRID = "hybrid"
+    ON_SITE = "on_site"
+
 
 @dataclass
 class ScrapeRefreshPolicy:

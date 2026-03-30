@@ -19,9 +19,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 from src.scrapers.base import BaseScraper
-from src.scrapers.models import ScrapeRequest, RawJobAd, LinkedInScraperConfig, ScrapeRefreshMode
-from src.database.db_manager import DBManager
-
+from src.scrapers.models import ScrapeRequest, RawJobAd, LinkedInScraperConfig, ScrapeRefreshMode, WorkMode, WriteMode
+from src.database.repositories.raw_job_ads_repository import RawJobAdsRepository
+from src.database.repositories.location_mappings_repository import LocationMappingsRepository
 
 LINKEDIN_PROFILES = {
     "1": {
@@ -39,9 +39,13 @@ class LinkedInScraperSelenium(BaseScraper):
     def __init__(
         self,
         config: LinkedInScraperConfig,
-        db_manager: Optional[DBManager] = None,
+    raw_job_ads_repository: Optional[RawJobAdsRepository] = None,
+    location_mappings_repository: Optional[LocationMappingsRepository] = None,
     ) -> None:
-        super().__init__(db_manager=db_manager)
+        super().__init__(
+            raw_job_ads_repository=raw_job_ads_repository,
+            location_mappings_repository=location_mappings_repository,
+        )
         self.config = config
         self.seen_direct_links: set[str] = set()
         self.profile_key = self.config.profile_key
@@ -115,10 +119,10 @@ class LinkedInScraperSelenium(BaseScraper):
                         )
                         batch_ads.extend(ads)
 
-                    if batch_ads and self.db_manager is not None:
-                        saved = self.db_manager.save_raw_job_ads(
+                    if batch_ads and self.raw_job_ads_repository is not None:
+                        saved = self.raw_job_ads_repository.save_raw_job_ads(
                             jobs=batch_ads,
-                            mode="upsert",
+                            mode=WriteMode.UPSERT,
                         )
                         logging.info(
                             "Saved %s ads for input_location='%s', job_title='%s'",
@@ -145,6 +149,7 @@ class LinkedInScraperSelenium(BaseScraper):
         resolved_location: dict[str, Any],
         job_title: str,
     ) -> list["RawJobAd"]:
+    
         logging.info(
             "Building pagination for job_title='%s', resolved_location='%s', geo_id='%s'",
             job_title,
@@ -190,7 +195,7 @@ class LinkedInScraperSelenium(BaseScraper):
         )
         raw_ads = self._get_raw_job_descriptions(
             driver=driver,
-            direct_links=filtered_direct_links,
+            direct_links=filtered_direct_links[:2], #TODO Testing, remove this!
             execution_ts=request.execution_ts,
         )
 
@@ -268,8 +273,8 @@ class LinkedInScraperSelenium(BaseScraper):
         for input_location in input_locations:
             cached_mappings: list[dict[str, Any]] = []
 
-            if self.db_manager is not None:
-                cached_mappings = self.db_manager.get_location_mappings(
+            if self.location_mappings_repository is not None:
+                cached_mappings = self.location_mappings_repository.get_location_mappings(
                     source="linkedin",
                     input_location=input_location,
                 )
@@ -293,8 +298,8 @@ class LinkedInScraperSelenium(BaseScraper):
                 location=input_location,
             )
 
-            if self.db_manager is not None and fresh_mappings:
-                self.db_manager.save_location_mappings(
+            if self.location_mappings_repository is not None and fresh_mappings:
+                self.location_mappings_repository.save_location_mappings(
                     source="linkedin",
                     input_location=input_location,
                     mappings=fresh_mappings,
@@ -527,7 +532,7 @@ class LinkedInScraperSelenium(BaseScraper):
         direct_links: list[dict[str, Any]],
         execution_ts: datetime,
     ) -> list[dict[str, Any]]:
-        if self.db_manager is None:
+        if self.raw_job_ads_repository is None:
             logging.info(
                 "No DB manager available. Skipping refresh filtering and scraping all %s links.",
                 len(direct_links),
@@ -545,7 +550,7 @@ class LinkedInScraperSelenium(BaseScraper):
 
         total_unique_links = len(ad_id_to_link)
 
-        known_ads = self.db_manager.get_known_ads_by_ids(
+        known_ads = self.raw_job_ads_repository.get_known_ads_by_ids(
             source="linkedin",
             ad_ids=list(ad_id_to_link.keys()),
         )
@@ -570,7 +575,7 @@ class LinkedInScraperSelenium(BaseScraper):
                 skipped_known_ids.append(ad_id)
 
         if skipped_known_ids:
-            self.db_manager.touch_last_seen_at(
+            self.raw_job_ads_repository.touch_last_seen_at(
                 source="linkedin",
                 ad_ids=skipped_known_ids,
                 seen_at=execution_ts,
@@ -902,12 +907,12 @@ def extract_work_mode(parts: list[str] | None) -> str | None:
             text = text.replace("–", "-").replace("—", "-")
             normalized.add(text)
 
-    if "hybrid" in normalized:
-        return "hybrid"
-    if "remote" in normalized:
-        return "remote"
+    if WorkMode.HYBRID in normalized:
+        return WorkMode.HYBRID
+    if WorkMode.REMOTE in normalized:
+        return WorkMode.REMOTE
     if "on-site" in normalized or "onsite" in normalized or "on site" in normalized:
-        return "on_site"
+        return WorkMode.ON_SITE
 
     return None
 
