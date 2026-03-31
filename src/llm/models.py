@@ -189,3 +189,19 @@ class LLMEnrichmentSelectionResult:
     jobs_to_process_count: int
     skipped_cached_jobs_count: int
     jobs_to_process: list[EligibleJobLLM]
+
+
+@dataclass(frozen=True)
+class PromptMessages:
+    system_message: str
+    user_message: str
+
+
+@dataclass(frozen=True)
+class LLMPreparedInputsResult:
+    profile_name: str
+    score_config_hash: str
+    eligible_jobs_count: int
+    jobs_to_process_count: int
+    skipped_cached_jobs_count: int
+    job_inputs: list[LLMJobInput]

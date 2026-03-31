@@ -6,7 +6,10 @@ from src.llm.models import (
     EligibleJobLLM,
     LLMEligibilityConfig,
     LLMEnrichmentSelectionResult,
+    CandidateProfile,
+    LLMRuntimeConfig
 )
+from src.llm.prompt_builder import PromptBuilder
 
 
 class LLMEnrichmentService:
@@ -23,14 +26,15 @@ class LLMEnrichmentService:
     - submit requests
     - save evaluations and usage metrics
     """
-
     def __init__(
         self,
         scoring_repository: ScoringRepository,
         llm_repository: LLMRepository,
+        prompt_builder: PromptBuilder,
     ) -> None:
         self.scoring_repository = scoring_repository
         self.llm_repository = llm_repository
+        self.prompt_builder = prompt_builder
 
     def get_jobs_to_process(
         self,
@@ -111,4 +115,43 @@ class LLMEnrichmentService:
             jobs_to_process_count=len(jobs_to_process),
             skipped_cached_jobs_count=skipped_cached_jobs_count,
             jobs_to_process=jobs_to_process,
+        )
+    
+    def build_job_inputs_to_process(
+        self,
+        profile_name: str,
+        score_config_hash: str,
+        candidate_profile: CandidateProfile,
+        runtime_config: LLMRuntimeConfig,
+        eligibility_config: LLMEligibilityConfig,
+        skip_cached: bool = True,
+    ) -> LLMEnrichmentSelectionResult:
+        selection = self.get_jobs_to_process(
+            profile_name=profile_name,
+            score_config_hash=score_config_hash,
+            profile_version_hash=candidate_profile.profile_version_hash,
+            llm_config_hash=runtime_config.llm_config_hash,
+            model_name=runtime_config.model_name,
+            execution_mode=runtime_config.execution_mode,
+            eligibility_config=eligibility_config,
+            skip_cached=skip_cached,
+        )
+
+        job_inputs = [
+            self.prompt_builder.build_job_input(
+                job=job,
+                candidate_profile=candidate_profile,
+                score_config_hash=score_config_hash,
+                runtime_config=runtime_config,
+            )
+            for job in selection.jobs_to_process
+        ]
+
+        return LLMEnrichmentSelectionResult(
+            profile_name=selection.profile_name,
+            score_config_hash=selection.score_config_hash,
+            eligible_jobs_count=selection.eligible_jobs_count,
+            jobs_to_process_count=selection.jobs_to_process_count,
+            skipped_cached_jobs_count=selection.skipped_cached_jobs_count,
+            jobs_to_process=job_inputs,
         )
