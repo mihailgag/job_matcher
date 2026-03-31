@@ -21,6 +21,9 @@ class DBManager:
         self.create_table_from_sql_file("linkedin_location_mappings.sql")
         self.create_table_from_sql_file("job_scores.sql")
         self.create_table_from_sql_file("input_scoring_configs.sql")
+        self.create_table_from_sql_file("llm_evaluations.sql")
+        self.create_table_from_sql_file("llm_requests.sql")
+        self.create_table_from_sql_file("llm_usage_metrics.sql")
 
     @contextmanager
     def get_connection(self):

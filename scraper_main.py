@@ -32,7 +32,7 @@ def main() -> None:
     linkedin_config = LinkedInScraperConfig(
         profile_key="2",
         headless=False,
-        max_results_per_search=25,
+        max_results_per_search=1000,
         refresh_policy=ScrapeRefreshPolicy(
         mode=ScrapeRefreshMode.STALE_OR_NEW,
         stale_after_days=10,
@@ -42,7 +42,7 @@ def main() -> None:
     jobs = scrape_runner.run(
         source="linkedin",
         job_titles=["data engineer"],
-        locations=["Netherlands", "Scotland", "Ukraine", "Israel", "European Union"],
+        locations=["Switzerland", "Germany", "United Kingdom", "Netherlands"],
         execution_ts=datetime.now(timezone.utc),
         scraper_config=linkedin_config
     )

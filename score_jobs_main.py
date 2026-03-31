@@ -85,22 +85,9 @@ def main() -> None:
 
     score_config = build_mihail_score_config()
 
-    llm_eligibility_config = LLMEligibilityConfig(
-        min_score=10,
-        max_age_days=30,
-        allowed_work_modes=[
-            WorkMode.REMOTE,
-            WorkMode.HYBRID,
-        ],
-        preferred_countries=["Switzerland", "Germany"],
-        max_description_chars=6000,
-        limit=5000,
-    )
-
     result = scoring_service.run(
         profile_name=profile_name,
         score_config=score_config,
-        llm_eligibility_config=llm_eligibility_config,
         raw_jobs_limit=None,
     )
 
