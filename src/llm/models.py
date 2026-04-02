@@ -212,6 +212,8 @@ class LLMRequestRecord:
     prompt_template_version: str
     schema_version: str
 
+    llm_evaluation_id: int | None = None
+
     provider_request_id: str | None = None
     batch_id: str | None = None
     batch_custom_id: str | None = None
@@ -280,4 +282,40 @@ class LLMPreparedInputsResult:
     eligible_jobs_count: int
     jobs_to_process_count: int
     skipped_cached_jobs_count: int
-    job_inputs: list[LLMJobInput]
+    jobs_to_process: list[LLMJobInput]
+
+
+
+@dataclass(frozen=True)
+class OpenAIRequestPayload:
+    system_message: str
+    user_message: str
+    schema: dict[str, Any]
+    model_name: str
+    max_output_tokens: int
+    temperature: float
+
+
+@dataclass(frozen=True)
+class LLMExecutionContext:
+    job_input: LLMJobInput
+    request_payload: OpenAIRequestPayload
+
+
+@dataclass(frozen=True)
+class LLMResponseEnvelope:
+    parsed_result: LLMParsedResult
+    provider_request_id: str | None
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cached_input_tokens: int = 0
+    raw_response_json: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class BatchRequestLine:
+    custom_id: str
+    method: str
+    url: str
+    body: dict[str, Any]

@@ -5,10 +5,13 @@ from src.core.logging_config import setup_logging
 from src.database.db_manager import DBManager
 from src.database.repositories.llm_repository import LLMRepository
 from src.database.repositories.scoring_repository import ScoringRepository
-from src.llm.models import CandidateProfile, LLMEligibilityConfig, LLMRuntimeConfig
+from src.llm.client import OpenAIClient
+from src.llm.models import CandidateProfile, LLMEligibilityConfig, LLMRuntimeConfig, ExecutionMode
 from src.llm.prompt_builder import PromptBuilder
+from src.llm.standard_executor import StandardLLMExecutor
 from src.scrapers.models import WorkMode
 from src.services.llm_enrichment_service import LLMEnrichmentService
+from src.services.llm_execution_service import LLMExecutionService
 
 
 def main() -> None:
@@ -24,6 +27,7 @@ def main() -> None:
     scoring_repository = ScoringRepository(db_manager)
     llm_repository = LLMRepository(db_manager)
     prompt_builder = PromptBuilder()
+    openai_client = OpenAIClient(api_key=os.getenv("OPENAI_API_KEY"))
 
     llm_enrichment_service = LLMEnrichmentService(
         scoring_repository=scoring_repository,
@@ -31,42 +35,54 @@ def main() -> None:
         prompt_builder=prompt_builder,
     )
 
+    standard_executor = StandardLLMExecutor(
+        llm_repository=llm_repository,
+        openai_client=openai_client,
+        prompt_builder=prompt_builder,
+    )
+
+    execution_service = LLMExecutionService(
+        standard_executor=standard_executor,
+    )
+
     profile_name = "mihail_data_eng"
-    score_config_hash = "9d7cee8fc0464f3f9d36cda060c4dd3f38116b3c2f426aa0cd38f31d6215bd1a"
+
+    latest_config = scoring_repository.get_latest_scoring_config(profile_name=profile_name)
+    if latest_config is None:
+        raise ValueError(f"No scoring config found for profile_name='{profile_name}'")
+    
+    score_config_hash = latest_config["config_hash"]
 
     candidate_profile = CandidateProfile(
         profile_name=profile_name,
         profile_version_hash="mihail_profile_v1",
         summary=(
             "Senior Data/Platform Engineer with strong experience in Python, SQL, "
-            "Airflow, ETL, Spark, Scala, Terraform, and GCP/Azure, Grafana, BigQuery, Lambda, "
-            "Composer InfluxDB. Also experienced with "
-            "AWS, CI/CD, APIs, GitHub actions, GitLab CI/CD and hands-on data platform engineering. "
-            "Prefers strong matches to data engineering and data platform roles."
+            "Airflow, ETL, Spark, Scala, Terraform, BigQuery,Composer, Dataproc, AWS Glue, AWS Lambda and GCP/Azure. Also experienced with "
+            "AWS, CI/CD, APIs, GitHub Workflows, GitLab Ci/CD container registires, Docker, and hands-on data platform engineering."
         ),
     )
 
     runtime_config = LLMRuntimeConfig(
-        model_name="gpt-5-mini",
-        execution_mode="standard",
+        model_name="gpt-4.1-mini",
+        execution_mode=ExecutionMode.STANDARD,
         prompt_template_version="job_match_v1",
         schema_version="job_match_result_v1",
-        llm_config_hash="job_match_v1_gpt5mini_standard",
+        llm_config_hash="job_match_v1_gpt41mini_standard",
         max_output_tokens=800,
         temperature=0.0,
     )
 
     eligibility_config = LLMEligibilityConfig(
-        min_score=10,
+        min_score=14,
         max_age_days=30,
-        allowed_work_modes=[
-            WorkMode.REMOTE,
-        ],
+        allowed_work_modes=[WorkMode.REMOTE],
+        preferred_countries=["United Kingdom", "Switzerland"],
         max_description_chars=6000,
-        limit=2000,
+        limit=10,
     )
 
-    result = llm_enrichment_service.build_job_inputs_to_process(
+    prepared = llm_enrichment_service.build_job_inputs_to_process(
         profile_name=profile_name,
         score_config_hash=score_config_hash,
         candidate_profile=candidate_profile,
@@ -75,24 +91,14 @@ def main() -> None:
         skip_cached=True,
     )
 
-    logging.info(
-        "Prepared %s LLM job inputs (eligible=%s, skipped_cached=%s)",
-        len(result.jobs_to_process),
-        result.eligible_jobs_count,
-        result.skipped_cached_jobs_count,
+    logging.info("Prepared %s jobs for execution", len(prepared.jobs_to_process))
+
+    execution_service.execute_prepared_inputs(
+        prepared_inputs=prepared,
+        runtime_config=runtime_config,
     )
-
-    for job_input in result.jobs_to_process[:3]:
-        messages = prompt_builder.build_prompt_messages(job_input)
-
-        print("=" * 100)
-        print(f"RAW JOB AD ID: {job_input.raw_job_ad_id}")
-        print(f"JOB CONTENT HASH: {job_input.job_content_hash}")
-        print("--- SYSTEM ---")
-        print(messages.system_message)
-        print("--- USER ---")
-        print(messages.user_message)
 
 
 if __name__ == "__main__":
     main()
+

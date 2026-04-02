@@ -31,7 +31,16 @@ CREATE TABLE IF NOT EXISTS llm_evaluations (
     salary_raw_text TEXT,
 
     remote_type TEXT NOT NULL, -- remote | hybrid | on_site | unknown
-    seniority TEXT NOT NULL,   -- junior | mid | senior | lead | staff | principal | unknown
+    remote_scope TEXT NOT NULL, -- global | region_limited | country_limited | city_limited | not_remote | unknown
+    remote_scope_details TEXT,
+
+    visa_sponsorship TEXT NOT NULL, -- yes | no | unknown
+    visa_sponsorship_details TEXT,
+
+    relocation_support TEXT NOT NULL, -- yes | no | unknown
+    relocation_support_details TEXT,
+
+    seniority TEXT NOT NULL, -- junior | mid | senior | lead | staff | principal | unknown
 
     raw_result_json JSONB NOT NULL,
 

@@ -230,3 +230,23 @@ class ScoringRepository:
             )
             for row in rows
         ]
+    
+
+    def get_latest_scoring_config(
+        self,
+        profile_name: str,
+    ) -> dict[str, Any] | None:
+        sql = """
+            SELECT
+                id,
+                profile_name,
+                config_hash,
+                config_json,
+                created_at
+            FROM scoring_configs
+            WHERE profile_name = %s
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        """
+        rows = self.db_manager.fetch_all(sql, (profile_name,))
+        return rows[0] if rows else None

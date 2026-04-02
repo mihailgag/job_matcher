@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterable
+from enum import Enum
 
 import psycopg
 from psycopg.rows import dict_row
@@ -36,9 +37,11 @@ class DBManager:
                 raise
 
     def execute(self, sql: str, params: tuple | dict | None = None) -> None:
+        normalized_params = self._normalize_params(params)
+
         with self.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, params)
+                cur.execute(sql, normalized_params)
 
     def fetch_all(
         self,
@@ -121,8 +124,8 @@ class DBManager:
     def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
         normalized: dict[str, Any] = {}
         for key, value in row.items():
-            if isinstance(value, dict):
-                normalized[key] = json.dumps(value)
+            if isinstance(value, (dict, list)):
+                normalized[key] = json.dumps(value, ensure_ascii=False)
             else:
                 normalized[key] = value
         return normalized
@@ -174,3 +177,55 @@ class DBManager:
             )
 
         raise ValueError(f"Unsupported mode: {mode}")
+    
+    def insert_row_returning_id(
+        self,
+        table_name: str,
+        row: dict[str, Any],
+        id_column: str = "id",
+    ) -> int:
+        normalized_row = self._normalize_row(row)
+        columns = list(normalized_row.keys())
+        values = [normalized_row[col] for col in columns]
+
+        sql = SQL(
+            "INSERT INTO {table} ({cols}) VALUES ({vals}) RETURNING {id_col}"
+        ).format(
+            table=Identifier(table_name),
+            cols=SQL(", ").join(Identifier(col) for col in columns),
+            vals=SQL(", ").join(Placeholder() for _ in columns),
+            id_col=Identifier(id_column),
+        )
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, values)
+                inserted_row = cur.fetchone()
+
+        return inserted_row[id_column]
+    
+
+    @staticmethod
+    def _normalize_value(value: Any) -> Any:
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return value
+
+
+    @classmethod
+    def _normalize_params(cls, params: tuple | dict | None):
+        if params is None:
+            return None
+
+        if isinstance(params, dict):
+            return {
+                key: cls._normalize_value(value)
+                for key, value in params.items()
+            }
+
+        if isinstance(params, tuple):
+            return tuple(cls._normalize_value(value) for value in params)
+
+        return params

@@ -3,3 +3,4 @@ selenium
 pandas
 webdriver-manager
 psycopg[binary]
+openai

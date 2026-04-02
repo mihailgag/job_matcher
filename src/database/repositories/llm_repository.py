@@ -57,6 +57,12 @@ class LLMRepository:
                 salary_raw_text,
                 remote_type,
                 seniority,
+                remote_scope,
+                remote_scope_details,
+                visa_sponsorship,
+                visa_sponsorship_details,
+                relocation_support,
+                relocation_support_details,
                 raw_result_json,
                 request_status,
                 processed_at,
@@ -120,6 +126,12 @@ class LLMRepository:
                 "salary_period": evaluation.salary_period,
                 "salary_raw_text": evaluation.salary_raw_text,
                 "remote_type": evaluation.remote_type,
+                "remote_scope": evaluation.remote_scope,
+                "remote_scope_details": evaluation.remote_scope_details,
+                "visa_sponsorship": evaluation.visa_sponsorship,
+                "visa_sponsorship_details": evaluation.visa_sponsorship_details,
+                "relocation_support": evaluation.relocation_support,
+                "relocation_support_details": evaluation.relocation_support_details,
                 "seniority": evaluation.seniority,
                 "raw_result_json": evaluation.raw_result_json,
                 "request_status": evaluation.request_status,
@@ -156,6 +168,12 @@ class LLMRepository:
                 "salary_period",
                 "salary_raw_text",
                 "remote_type",
+                "remote_scope",
+                "remote_scope_details",
+                "visa_sponsorship",
+                "visa_sponsorship_details",
+                "relocation_support",
+                "relocation_support_details",
                 "seniority",
                 "raw_result_json",
                 "request_status",
@@ -326,3 +344,79 @@ class LLMRepository:
         )
 
         return {row["raw_job_ad_id"] for row in rows}
+    
+
+    def insert_request_returning_id(
+        self,
+        request: LLMRequestRecord,
+    ) -> int:
+        """Insert an LLM request row and return its primary key."""
+        row = {
+            "raw_job_ad_id": request.raw_job_ad_id,
+            "llm_evaluation_id": request.llm_evaluation_id,
+            "profile_name": request.profile_name,
+            "score_config_hash": request.score_config_hash,
+            "profile_version_hash": request.profile_version_hash,
+            "llm_config_hash": request.llm_config_hash,
+            "model_name": request.model_name,
+            "execution_mode": request.execution_mode,
+            "prompt_template_version": request.prompt_template_version,
+            "schema_version": request.schema_version,
+            "provider_request_id": request.provider_request_id,
+            "batch_id": request.batch_id,
+            "batch_custom_id": request.batch_custom_id,
+            "request_payload_json": request.request_payload_json,
+            "response_payload_json": request.response_payload_json,
+            "request_status": request.request_status,
+            "error_type": request.error_type,
+            "error_message": request.error_message,
+            "retry_count": request.retry_count,
+            "sent_at": request.sent_at,
+            "finished_at": request.finished_at,
+        }
+
+        return self.db_manager.insert_row_returning_id(
+            table_name="llm_requests",
+            row=row,
+        )
+    
+
+    def update_request_status(
+        self,
+        request_id: int,
+        request_status: str,
+        provider_request_id: str | None = None,
+        response_payload_json: dict[str, Any] | None = None,
+        error_type: str | None = None,
+        error_message: str | None = None,
+        llm_evaluation_id: int | None = None,
+        finished_at=None,
+    ) -> None:
+        """Update execution status and response metadata for an existing request."""
+        sql = """
+            UPDATE llm_requests
+            SET
+                request_status = %(request_status)s,
+                provider_request_id = COALESCE(%(provider_request_id)s, provider_request_id),
+                response_payload_json = COALESCE(%(response_payload_json)s, response_payload_json),
+                error_type = %(error_type)s,
+                error_message = %(error_message)s,
+                llm_evaluation_id = COALESCE(%(llm_evaluation_id)s, llm_evaluation_id),
+                finished_at = %(finished_at)s,
+                updated_at = NOW()
+            WHERE id = %(request_id)s
+        """
+
+        self.db_manager.execute(
+            sql,
+            {
+                "request_id": request_id,
+                "request_status": request_status,
+                "provider_request_id": provider_request_id,
+                "response_payload_json": response_payload_json,
+                "error_type": error_type,
+                "error_message": error_message,
+                "llm_evaluation_id": llm_evaluation_id,
+                "finished_at": finished_at,
+            },
+        )
