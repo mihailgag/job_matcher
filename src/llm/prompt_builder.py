@@ -1,7 +1,6 @@
 import hashlib
 import json
 from datetime import date
-from typing import Any
 
 from src.llm.models import (
     CandidateProfile,

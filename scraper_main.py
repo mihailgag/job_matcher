@@ -9,7 +9,7 @@ from src.database.repositories.location_mappings_repository import (
 )
 from src.database.repositories.raw_job_ads_repository import RawJobAdsRepository
 from src.services.scrape_runner import ScrapeRunner
-from src.scrapers.models import LinkedInScraperConfig, ScrapeRefreshMode, ScrapeRefreshPolicy
+from src.scrapers.models import LinkedInScraperConfig, ScrapeRefreshMode, ScrapeRefreshPolicy, JobTitleMatchMode
 
 
 def main() -> None:
@@ -35,14 +35,16 @@ def main() -> None:
         max_results_per_search=1000,
         refresh_policy=ScrapeRefreshPolicy(
         mode=ScrapeRefreshMode.STALE_OR_NEW,
-        stale_after_days=10,
-        )
+        stale_after_days=5
+        ),
+        job_title_match_mode=JobTitleMatchMode.CONTAINS_INPUT_TITLE
+        
     )
 
     jobs = scrape_runner.run(
         source="linkedin",
         job_titles=["data engineer"],
-        locations=["Switzerland", "Germany", "United Kingdom", "Netherlands"],
+        locations=["Belgium", "Luxembourg"],
         execution_ts=datetime.now(timezone.utc),
         scraper_config=linkedin_config
     )

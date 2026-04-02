@@ -51,6 +51,12 @@ class WorkMode(StrEnum):
     ON_SITE = "on_site"
 
 
+class JobTitleMatchMode(StrEnum):
+    ALL = "all"
+    CONTAINS_INPUT_TITLE = "contains_input_title"
+    EXACT_INPUT_TITLE = "exact_input_title"
+
+
 @dataclass
 class ScrapeRefreshPolicy:
     mode: ScrapeRefreshMode = ScrapeRefreshMode.STALE_OR_NEW
@@ -58,9 +64,8 @@ class ScrapeRefreshPolicy:
 
 @dataclass
 class LinkedInScraperConfig(BaseScraperConfig):
-    profile_key: str = "1"
+    profile_key: str = "2"
     headless: bool = False
     max_results_per_search: int = 25
-    refresh_policy: ScrapeRefreshPolicy = field(
-        default_factory=ScrapeRefreshPolicy
-    )
+    refresh_policy: ScrapeRefreshPolicy = field(default_factory=ScrapeRefreshPolicy)
+    job_title_match_mode: JobTitleMatchMode = JobTitleMatchMode.ALL 

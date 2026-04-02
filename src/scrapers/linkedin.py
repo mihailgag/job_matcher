@@ -19,14 +19,14 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 from src.scrapers.base import BaseScraper
-from src.scrapers.models import ScrapeRequest, RawJobAd, LinkedInScraperConfig, ScrapeRefreshMode, WorkMode, WriteMode
+from src.scrapers.models import ScrapeRequest, RawJobAd, LinkedInScraperConfig, ScrapeRefreshMode, WorkMode, WriteMode, JobTitleMatchMode
 from src.database.repositories.raw_job_ads_repository import RawJobAdsRepository
 from src.database.repositories.location_mappings_repository import LocationMappingsRepository
 
 LINKEDIN_PROFILES = {
     "1": {
         "username": "kyrieivanovski@gmail.com",
-        "password": "Mihail123*",
+        "password": "Mihailtest123*",
     },
     "2": {
         "username": "stephanstephenson123@gmail.com",
@@ -182,10 +182,15 @@ class LinkedInScraperSelenium(BaseScraper):
             pagination_urls=pagination_urls,
         )
 
-        filtered_direct_links = self._filter_direct_links_for_scraping(
+        filtered_direct_links_for_scraping = self._filter_direct_links_for_scraping(
             direct_links=direct_links,
             execution_ts=request.execution_ts,
         )
+
+        filtered_direct_links = self._filter_direct_links_by_title_match_mode(
+        direct_links=filtered_direct_links_for_scraping,
+        job_title=job_title,
+)
 
         logging.info(
             "Parsing %s direct job links after refresh filtering for job_title='%s', resolved_location='%s'",
@@ -206,6 +211,81 @@ class LinkedInScraperSelenium(BaseScraper):
             resolved_location["resolved_location"],
         )
         return raw_ads
+    
+    @staticmethod
+    def _normalize_title_for_contains(value: str | None) -> str:
+        if not value:
+            return ""
+        return " ".join(value.strip().lower().split())
+        
+    def _filter_direct_links_by_title_match_mode(
+        self,
+        direct_links: list[dict[str, Any]],
+        job_title: str,
+    ) -> list[dict[str, Any]]:
+        mode = self.config.job_title_match_mode
+        total_before = len(direct_links)
+
+        if mode == JobTitleMatchMode.ALL:
+            logging.info(
+                "Job title filtering skipped. mode='%s', input_job_title='%s', total_links=%s",
+                mode,
+                job_title,
+                total_before,
+            )
+            return direct_links
+
+        kept_links: list[dict[str, Any]] = []
+        dropped_titles: list[str] = []
+
+        if mode == JobTitleMatchMode.CONTAINS_INPUT_TITLE:
+            normalized_input = self._normalize_title_for_contains(job_title)
+
+            for item in direct_links:
+                current_title = item.get("title") or ""
+                normalized_title = self._normalize_title_for_contains(current_title)
+
+                if normalized_input in normalized_title:
+                    kept_links.append(item)
+                else:
+                    dropped_titles.append(current_title)
+
+        elif mode == JobTitleMatchMode.EXACT_INPUT_TITLE:
+            for item in direct_links:
+                current_title = item.get("title") or ""
+
+                if current_title == job_title:
+                    kept_links.append(item)
+                else:
+                    dropped_titles.append(current_title)
+
+        else:
+            raise ValueError(f"Unsupported job title match mode: {mode}")
+
+        total_after = len(kept_links)
+        dropped_count = total_before - total_after
+
+        logging.info(
+            (
+                "Job title filtering finished. mode='%s', input_job_title='%s', "
+                "total_before=%s, total_after=%s, dropped=%s"
+            ),
+            mode,
+            job_title,
+            total_before,
+            total_after,
+            dropped_count,
+        )
+
+        if dropped_titles:
+            sample_dropped_titles = dropped_titles[:5]
+            logging.info(
+                "Sample dropped titles for input_job_title='%s': %s",
+                job_title,
+                sample_dropped_titles,
+            )
+
+        return kept_links
 
     def _group_resolved_locations_by_input_location(
         self,

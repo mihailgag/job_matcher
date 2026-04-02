@@ -1,13 +1,69 @@
 from dataclasses import dataclass
 from typing import Optional, Literal, Any
 from datetime import datetime, date
+
 from src.scrapers.models import WorkMode
 
-ExecutionMode = Literal["standard", "batch"]
-FitLabel = Literal["strong_fit", "medium_fit", "weak_fit", "not_fit"]
-RemoteType = Literal["remote", "hybrid", "on_site", "unknown"]
-Seniority = Literal["junior", "mid", "senior", "lead", "staff", "principal", "unknown"]
-SalaryPeriod = Literal["hour", "day", "month", "year", "unknown"]
+
+from enum import StrEnum
+
+
+class BaseStrEnum(StrEnum):
+    @classmethod
+    def values(cls) -> list[str]:
+        return [item.value for item in cls]
+
+
+class ExecutionMode(BaseStrEnum):
+    STANDARD = "standard"
+    BATCH = "batch"
+
+
+class FitLabel(BaseStrEnum):
+    STRONG_FIT = "strong_fit"
+    MEDIUM_FIT = "medium_fit"
+    WEAK_FIT = "weak_fit"
+    NOT_FIT = "not_fit"
+
+
+class RemoteType(BaseStrEnum):
+    REMOTE = "remote"
+    HYBRID = "hybrid"
+    ON_SITE = "on_site"
+    UNKNOWN = "unknown"
+
+
+class RemoteScope(BaseStrEnum):
+    GLOBAL = "global"
+    REGION_LIMITED = "region_limited"
+    COUNTRY_LIMITED = "country_limited"
+    CITY_LIMITED = "city_limited"
+    NOT_REMOTE = "not_remote"
+    UNKNOWN = "unknown"
+
+
+class Seniority(BaseStrEnum):
+    JUNIOR = "junior"
+    MID = "mid"
+    SENIOR = "senior"
+    LEAD = "lead"
+    STAFF = "staff"
+    PRINCIPAL = "principal"
+    UNKNOWN = "unknown"
+
+
+class SalaryPeriod(BaseStrEnum):
+    HOUR = "hour"
+    DAY = "day"
+    MONTH = "month"
+    YEAR = "year"
+    UNKNOWN = "unknown"
+
+
+class YesNoUnknown(BaseStrEnum):
+    YES = "yes"
+    NO = "no"
+    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True)
@@ -15,6 +71,7 @@ class CandidateProfile:
     profile_name: str
     profile_version_hash: str
     summary: str
+
 
 @dataclass(frozen=True)
 class LLMRuntimeConfig:
@@ -25,6 +82,7 @@ class LLMRuntimeConfig:
     llm_config_hash: str
     max_output_tokens: int = 800
     temperature: float = 0.0
+
 
 @dataclass(frozen=True)
 class LLMJobInput:
@@ -49,18 +107,18 @@ class LLMJobInput:
 
     candidate_profile_summary: str
 
-@dataclass
+
+@dataclass(frozen=True)
 class EligibleJobLLM:
-    raw_job_ad_id: str
+    raw_job_ad_id: int
     score: int
     title: Optional[str]
     company_name: Optional[str]
     job_location: Optional[str]
     work_mode: Optional[WorkMode]
     ad_link: Optional[str]
-    posted_date: Optional[datetime]
+    posted_date: Optional[date]
     description: Optional[str]
-    job_location: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -86,6 +144,15 @@ class LLMParsedResult:
     salary: SalaryExtraction
 
     remote_type: RemoteType
+    remote_scope: RemoteScope
+    remote_scope_details: str | None
+
+    visa_sponsorship: YesNoUnknown
+    visa_sponsorship_details: str | None
+
+    relocation_support: YesNoUnknown
+    relocation_support_details: str | None
+
     seniority: Seniority
 
 
@@ -117,6 +184,15 @@ class LLMEvaluationRecord:
     salary_raw_text: str | None
 
     remote_type: RemoteType
+    remote_scope: RemoteScope
+    remote_scope_details: str | None
+
+    visa_sponsorship: YesNoUnknown
+    visa_sponsorship_details: str | None
+
+    relocation_support: YesNoUnknown
+    relocation_support_details: str | None
+
     seniority: Seniority
 
     raw_result_json: dict[str, Any]

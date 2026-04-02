@@ -39,9 +39,9 @@ def main() -> None:
         profile_version_hash="mihail_profile_v1",
         summary=(
             "Senior Data/Platform Engineer with strong experience in Python, SQL, "
-            "Airflow, ETL, Spark, Scala, Terraform, and GCP/Azure, Grafana, BigQuery, Lambda"
+            "Airflow, ETL, Spark, Scala, Terraform, and GCP/Azure, Grafana, BigQuery, Lambda, "
             "Composer InfluxDB. Also experienced with "
-            "AWS, CI/CD, APIs, and hands-on data platform engineering. "
+            "AWS, CI/CD, APIs, GitHub actions, GitLab CI/CD and hands-on data platform engineering. "
             "Prefers strong matches to data engineering and data platform roles."
         ),
     )
@@ -89,9 +89,9 @@ def main() -> None:
         print(f"RAW JOB AD ID: {job_input.raw_job_ad_id}")
         print(f"JOB CONTENT HASH: {job_input.job_content_hash}")
         print("--- SYSTEM ---")
-        print(messages.system_message[:500])
+        print(messages.system_message)
         print("--- USER ---")
-        print(messages.user_message[:1000])
+        print(messages.user_message)
 
 
 if __name__ == "__main__":
